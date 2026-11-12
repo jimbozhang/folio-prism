@@ -26,7 +26,7 @@
 用一个 App 替代现有的两套工具：
 
 - invest-folio (private repo)：单文件 HTML 的实时估值 + 7 大类再平衡工具；
-- [随手记](www.sui.com)：投资流水记账。
+- [随手记](http://www.sui.com)：投资流水记账。
 
 ## 数据存储
 
