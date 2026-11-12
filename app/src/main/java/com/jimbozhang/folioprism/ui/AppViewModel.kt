@@ -99,8 +99,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             _historyState.value = HistoryUiState.Idle
-            _state.value = AppUiState.LoadingQuotes
-            fetchQuotes(updated)
+            // Keep the last fetched quotes: prices are refreshed only on startup
+            // and on explicit user refresh.
+            val ready = _state.value as? AppUiState.Ready
+            if (ready != null) {
+                _state.value = ready.copy(data = updated)
+            } else {
+                _state.value = AppUiState.LoadingQuotes
+                fetchQuotes(updated)
+            }
         }
     }
 

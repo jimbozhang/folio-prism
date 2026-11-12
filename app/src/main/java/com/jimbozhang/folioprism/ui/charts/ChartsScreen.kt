@@ -1,9 +1,8 @@
 package com.jimbozhang.folioprism.ui.charts
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,16 +14,36 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.AccountBalance
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CurrencyExchange
+import androidx.compose.material.icons.outlined.Diamond
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.PieChart
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Savings
+import androidx.compose.material.icons.automirrored.outlined.ShowChart
+import androidx.compose.material.icons.outlined.StackedLineChart
+import androidx.compose.material.icons.automirrored.outlined.TrendingUp
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,14 +51,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.jimbozhang.folioprism.data.price.LivePriceProvider
 import com.jimbozhang.folioprism.domain.calc.EventReplay
@@ -48,25 +72,45 @@ import com.jimbozhang.folioprism.domain.calc.SnapshotCalculator
 import com.jimbozhang.folioprism.domain.calc.localDate
 import com.jimbozhang.folioprism.domain.calc.parseEventTime
 import com.jimbozhang.folioprism.domain.history.CategoryPnl
+import com.jimbozhang.folioprism.domain.history.DateRange
 import com.jimbozhang.folioprism.domain.history.DailyPortfolioValue
-import com.jimbozhang.folioprism.domain.history.HistoryResult
+import com.jimbozhang.folioprism.domain.model.Category
+import com.jimbozhang.folioprism.domain.model.CategoryIds
 import com.jimbozhang.folioprism.domain.model.ExpenseEvent
 import com.jimbozhang.folioprism.domain.model.ExternalDirection
 import com.jimbozhang.folioprism.domain.model.ExternalEvent
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import com.jimbozhang.folioprism.ui.HistoryUiState
-import com.jimbozhang.folioprism.ui.components.FolioFilterChip
+import com.jimbozhang.folioprism.ui.components.DateRangePickerDialog
+import com.jimbozhang.folioprism.ui.components.RangeArrowButton
 import com.jimbozhang.folioprism.ui.components.formatCny
 import com.jimbozhang.folioprism.ui.components.formatPercent
+import com.jimbozhang.folioprism.ui.theme.FolioBackground
 import com.jimbozhang.folioprism.ui.theme.FolioCoral
 import com.jimbozhang.folioprism.ui.theme.FolioDivider
 import com.jimbozhang.folioprism.ui.theme.FolioGold
 import com.jimbozhang.folioprism.ui.theme.FolioGreen
+import com.jimbozhang.folioprism.ui.theme.FolioInk
 import com.jimbozhang.folioprism.ui.theme.FolioMuted
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.YearMonth
+
+private enum class ChartType(
+    val label: String,
+    val icon: ImageVector,
+    val needsHistory: Boolean,
+    val usesRange: Boolean,
+) {
+    ASSETS("总资产", Icons.AutoMirrored.Outlined.ShowChart, needsHistory = true, usesRange = true),
+    CATEGORY_ASSETS("类别资产", Icons.Outlined.StackedLineChart, needsHistory = true, usesRange = true),
+    CATEGORY_PNL("类别盈亏", Icons.Outlined.PieChart, needsHistory = true, usesRange = true),
+    FLOWS("累计投入取出", Icons.Outlined.Savings, needsHistory = false, usesRange = true),
+    EXPENSES("费用统计", Icons.AutoMirrored.Outlined.ReceiptLong, needsHistory = false, usesRange = true),
+    INSTITUTIONS("机构分布", Icons.Outlined.AccountBalance, needsHistory = false, usesRange = false),
+    CURRENCIES("币种分布", Icons.Outlined.CurrencyExchange, needsHistory = false, usesRange = false),
+}
 
 private data class MonthFlow(
     val month: YearMonth,
@@ -80,12 +124,15 @@ private data class MonthExpense(
     val byCategory: Map<String, BigDecimal>,
 )
 
-private val rangeOptions = listOf(
-    "1M" to "近 1 月",
-    "3M" to "近 3 月",
-    "YTD" to "今年至今",
-    "1Y" to "近 1 年",
-    "ALL" to "全部",
+private data class DistributionRowData(
+    val name: String,
+    val value: BigDecimal,
+    val color: Color,
+)
+
+private val dateRangeSaver = listSaver<DateRange, Long>(
+    save = { listOf(it.from.toEpochDay(), it.to.toEpochDay()) },
+    restore = { DateRange(LocalDate.ofEpochDay(it[0]), LocalDate.ofEpochDay(it[1])) },
 )
 
 @Composable
@@ -103,221 +150,516 @@ fun ChartsScreen(
     val categoryNames = remember(data.settings.categories) {
         data.settings.categories.associate { it.id to it.name }
     }
-    val tabs = listOf("总资产", "类别盈亏", "累计投入取出", "费用统计", "机构分布", "币种分布")
-    var tab by remember { mutableStateOf(0) }
-    var rangeKey by remember { mutableStateOf("YTD") }
-
+    val categoriesById = remember(data.settings.categories) {
+        data.settings.categories.associateBy { it.id }
+    }
     val today = LocalDate.now()
     val earliestEvent = remember(data.events) {
-        data.events.minOfOrNull { it.localDate() } ?: today
-    }
-    val rangeFrom = when (rangeKey) {
-        "1M" -> today.minusMonths(1)
-        "3M" -> today.minusMonths(3)
-        "YTD" -> LocalDate.of(today.year, 1, 1)
-        "1Y" -> today.minusYears(1)
-        "ALL" -> earliestEvent
-        else -> LocalDate.of(today.year, 1, 1)
+        data.events.minOfOrNull { it.localDate() }
     }
 
-    LaunchedEffect(tab, rangeKey, data.events.size) {
-        if (tab == 0 || tab == 1) {
-            val ready = historyState as? HistoryUiState.Ready
-            if (ready == null || ready.result.from != rangeFrom || ready.result.to != today) {
-                onLoadHistory(rangeFrom, today)
-            }
-        }
+    var chart by rememberSaveable { mutableStateOf(ChartType.ASSETS) }
+    var range by rememberSaveable(stateSaver = dateRangeSaver) {
+        mutableStateOf(DateRange.yearToDate(today))
     }
+    var showRangePicker by remember { mutableStateOf(false) }
+    val orderedCategories = remember(data.settings.categories) {
+        data.settings.categories.sortedBy { it.order }
+    }
+    var categoryId by rememberSaveable {
+        mutableStateOf(orderedCategories.firstOrNull()?.id ?: "")
+    }
+    val selectedCategory = orderedCategories.firstOrNull { it.id == categoryId }
+        ?: orderedCategories.firstOrNull()
 
-    val monthlyFlows = remember(data.events) { monthlyFlows(data) }
-    val monthlyExpenses = remember(data.events, categoryNames) {
-        monthlyExpenses(data, categoryNames)
+    val monthlyFlows = remember(data.events, range) { monthlyFlows(data, range) }
+    val monthlyExpenses = remember(data.events, categoryNames, range) {
+        monthlyExpenses(data, categoryNames, range)
     }
     val institutionRows = remember(snapshot.brokerValues, data.institutions) {
-        snapshot.brokerValues.map { (id, value) ->
-            val name = data.institutions.firstOrNull { it.id == id }?.chartAlias
-                ?: data.institutions.firstOrNull { it.id == id }?.name
-                ?: id
-            name to value
-        }.sortedByDescending { it.second }
+        institutionRows(snapshot, data)
     }
-    val currencyRows = remember(snapshot.currencyValues) {
-        snapshot.currencyValues.map { (currency, value) ->
-            when (currency) {
-                "CNY" -> "人民币"
-                "USD" -> "美元"
-                "HKD" -> "港元"
-                "PHYSICAL_GOLD" -> "实物黄金"
-                else -> currency
-            } to value
-        }.sortedByDescending { it.second }
+    val currencyRows = remember(snapshot.currencyValues) { currencyRows(snapshot) }
+
+    LaunchedEffect(chart, range, data.events.size) {
+        if (!chart.needsHistory) return@LaunchedEffect
+        val ready = historyState as? HistoryUiState.Ready
+        if (ready == null || ready.result.from != range.from || ready.result.to != range.to) {
+            onLoadHistory(range.from, range.to)
+        }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            top = contentPadding.calculateTopPadding() + 16.dp,
-            bottom = contentPadding.calculateBottomPadding() + 16.dp,
-        ),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(FolioBackground),
     ) {
-        item {
-            Text("图表", style = MaterialTheme.typography.headlineSmall)
+        ChartHeader(
+            chart = chart,
+            contentPadding = contentPadding,
+            onSelected = { chart = it },
+        )
+        if (chart == ChartType.CATEGORY_ASSETS && selectedCategory != null) {
+            CategorySelector(
+                categories = orderedCategories,
+                selected = selectedCategory,
+                onSelected = { categoryId = it },
+            )
         }
-        item {
-            Row(
+
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            when (chart) {
+                ChartType.ASSETS -> assetsContent(
+                    historyState = historyState,
+                    range = range,
+                    snapshot = snapshot,
+                    onRetry = { onLoadHistory(range.from, range.to) },
+                )
+
+                ChartType.CATEGORY_ASSETS -> categoryAssetsContent(
+                    historyState = historyState,
+                    range = range,
+                    snapshot = snapshot,
+                    categoryId = selectedCategory?.id ?: "",
+                    categoryName = selectedCategory?.name ?: "",
+                    onRetry = { onLoadHistory(range.from, range.to) },
+                )
+
+                ChartType.CATEGORY_PNL -> categoryPnlContent(
+                    historyState = historyState,
+                    range = range,
+                    onRetry = { onLoadHistory(range.from, range.to) },
+                )
+
+                ChartType.FLOWS -> flowsContent(monthlyFlows)
+                ChartType.EXPENSES -> expensesContent(monthlyExpenses)
+
+                ChartType.INSTITUTIONS -> distributionContent(
+                    title = "机构分布",
+                    rows = institutionRows,
+                    total = snapshot.totalValueCny,
+                )
+
+                ChartType.CURRENCIES -> distributionContent(
+                    title = "币种分布",
+                    rows = currencyRows,
+                    total = snapshot.totalValueCny,
+                )
+            }
+        }
+
+        if (chart.usesRange) {
+            ChartRangeBar(
+                range = range,
+                today = today,
+                onShift = { range = it },
+                onPick = { showRangePicker = true },
+            )
+        }
+    }
+
+    if (showRangePicker) {
+        DateRangePickerDialog(
+            initial = range,
+            today = today,
+            earliest = earliestEvent,
+            onDismiss = { showRangePicker = false },
+            onConfirm = {
+                range = it
+                showRangePicker = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun CategorySelector(
+    categories: List<Category>,
+    selected: Category,
+    onSelected: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 2.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { expanded = true }
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "类别",
+                style = MaterialTheme.typography.labelMedium,
+                color = FolioMuted,
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                tabs.forEachIndexed { index, label ->
-                    FolioFilterChip(
-                        selected = tab == index,
-                        onClick = { tab = index },
-                        label = label,
-                    )
-                }
-            }
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(categoryColor(selected)),
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = selected.name,
+                style = MaterialTheme.typography.titleSmall,
+                color = FolioInk,
+            )
+            Spacer(modifier = Modifier.width(2.dp))
+            Icon(
+                imageVector = Icons.Outlined.ExpandMore,
+                contentDescription = "切换类别",
+                tint = FolioMuted,
+                modifier = Modifier.size(18.dp),
+            )
         }
-        if (tab == 0 || tab == 1) {
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    rangeOptions.forEach { (key, label) ->
-                        FolioFilterChip(
-                            selected = rangeKey == key,
-                            onClick = { rangeKey = key },
-                            label = label,
-                        )
-                    }
-                }
-            }
-        }
-
-        when (tab) {
-            0 -> {
-                item {
-                    HistorySummaryCard(
-                        historyState = historyState,
-                        onRetry = { onLoadHistory(rangeFrom, today) },
-                    )
-                }
-                (historyState as? HistoryUiState.Ready)?.let { ready ->
-                    item { HistoryLineChart(ready.result.curve) }
-                    if (ready.result.logs.isNotEmpty()) {
-                        item { LogsCard(ready.result.logs) }
-                    }
-                }
-                item { CategoryTable(snapshot) }
-            }
-
-            1 -> {
-                when (val current = historyState) {
-                    is HistoryUiState.Ready -> {
-                        val incomplete = current.result.categoryPnl.any { it.incomplete || it.pnlCny == null }
-                        val totalPnl = if (incomplete) {
-                            null
-                        } else {
-                            current.result.categoryPnl.fold(BigDecimal.ZERO) { acc, item ->
-                                acc.add(item.pnlCny ?: BigDecimal.ZERO)
-                            }
-                        }
-                        val maxAbs = current.result.categoryPnl
-                            .mapNotNull { it.pnlCny?.abs() }
-                            .maxOrNull() ?: BigDecimal.ZERO
-                        item {
-                            BigPnlHeader(
-                                label = "类别盈亏合计",
-                                pnl = totalPnl,
-                                incomplete = incomplete,
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            categories.forEach { category ->
+                val isSelected = category.id == selected.id
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(categoryColor(category)),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = category.name,
+                                color = if (isSelected) FolioGold else FolioInk,
                             )
                         }
-                        items(current.result.categoryPnl) { pnl ->
-                            PnlRow(pnl, maxAbs)
+                    },
+                    trailingIcon = {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Outlined.Check,
+                                contentDescription = null,
+                                tint = FolioGold,
+                            )
                         }
-                        if (current.result.logs.isNotEmpty()) {
-                            item { LogsCard(current.result.logs) }
+                    },
+                    onClick = {
+                        onSelected(category.id)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun categoryColor(category: Category): Color =
+    runCatching { Color(android.graphics.Color.parseColor(category.color)) }
+        .getOrElse { FolioGold }
+
+@Composable
+private fun ChartHeader(
+    chart: ChartType,
+    contentPadding: PaddingValues,
+    onSelected: (ChartType) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = 16.dp,
+                end = 16.dp,
+                top = contentPadding.calculateTopPadding() + 14.dp,
+                bottom = 4.dp,
+            ),
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { expanded = true }
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = chart.label,
+                style = MaterialTheme.typography.headlineSmall,
+                color = FolioInk,
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                imageVector = Icons.Outlined.ExpandMore,
+                contentDescription = "切换图表",
+                tint = FolioGold,
+                modifier = Modifier.size(24.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            ChartType.entries.forEach { type ->
+                val selected = type == chart
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = type.label,
+                            color = if (selected) FolioGold else FolioInk,
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = type.icon,
+                            contentDescription = null,
+                            tint = if (selected) FolioGold else FolioMuted,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    trailingIcon = {
+                        if (selected) {
+                            Icon(
+                                imageVector = Icons.Outlined.Check,
+                                contentDescription = null,
+                                tint = FolioGold,
+                            )
                         }
-                    }
+                    },
+                    onClick = {
+                        onSelected(type)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
 
-                    is HistoryUiState.Error -> item {
-                        ErrorCard(current.message) { onLoadHistory(rangeFrom, today) }
-                    }
+@Composable
+private fun ChartRangeBar(
+    range: DateRange,
+    today: LocalDate,
+    onShift: (DateRange) -> Unit,
+    onPick: () -> Unit,
+) {
+    Surface(
+        color = Color.White,
+        shadowElevation = 10.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RangeArrowButton(
+                icon = Icons.AutoMirrored.Outlined.KeyboardArrowLeft,
+                contentDescription = "上一区间",
+                enabled = true,
+                onClick = { onShift(range.shiftBack()) },
+            )
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onPick)
+                    .padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = range.label(),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FolioInk,
+                )
+                Spacer(modifier = Modifier.width(2.dp))
+                Icon(
+                    imageVector = Icons.Outlined.ExpandMore,
+                    contentDescription = "选择日期区间",
+                    tint = FolioMuted,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            RangeArrowButton(
+                icon = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = "下一区间",
+                enabled = range.to.isBefore(today),
+                onClick = { onShift(range.shiftForward(today)) },
+            )
+        }
+    }
+}
 
-                    else -> item { LoadingCard() }
+private fun LazyListScope.assetsContent(
+    historyState: HistoryUiState,
+    range: DateRange,
+    snapshot: PortfolioSnapshot,
+    onRetry: () -> Unit,
+) {
+    val ready = (historyState as? HistoryUiState.Ready)
+        ?.takeIf { it.result.from == range.from && it.result.to == range.to }
+
+    when {
+        ready != null -> {
+            item { HistorySummary(ready.result.curve, ready.result.categoryPnl) }
+            item { HistoryLineChart(ready.result.curve) }
+        }
+
+        historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
+        else -> item { LoadingBlock() }
+    }
+    item { CategoryTable(snapshot) }
+}
+
+private fun LazyListScope.categoryAssetsContent(
+    historyState: HistoryUiState,
+    range: DateRange,
+    snapshot: PortfolioSnapshot,
+    categoryId: String,
+    categoryName: String,
+    onRetry: () -> Unit,
+) {
+    val ready = (historyState as? HistoryUiState.Ready)
+        ?.takeIf { it.result.from == range.from && it.result.to == range.to }
+
+    when {
+        ready != null -> {
+            val pnl = ready.result.categoryPnl.firstOrNull { it.categoryId == categoryId }
+                ?: CategoryPnl(categoryId, categoryName, null, true)
+            val curve = ready.result.curve.map { point ->
+                DailyPortfolioValue(
+                    date = point.date,
+                    totalCny = point.categoryValues[categoryId],
+                    categoryValues = emptyMap(),
+                    incomplete = point.categoryValues[categoryId] == null && point.incomplete,
+                )
+            }
+            item { HistorySummary(curve, listOf(pnl)) }
+            item { HistoryLineChart(curve) }
+        }
+
+        historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
+        else -> item { LoadingBlock() }
+    }
+    item { CategoryTable(snapshot, categoryId) }
+}
+
+private fun LazyListScope.categoryPnlContent(
+    historyState: HistoryUiState,
+    range: DateRange,
+    onRetry: () -> Unit,
+) {
+    val ready = (historyState as? HistoryUiState.Ready)
+        ?.takeIf { it.result.from == range.from && it.result.to == range.to }
+
+    when {
+        ready != null -> {
+            val pnl = ready.result.categoryPnl
+            val incomplete = pnl.any { it.incomplete || it.pnlCny == null }
+            val totalPnl = if (incomplete) {
+                null
+            } else {
+                pnl.fold(BigDecimal.ZERO) { acc, item -> acc.add(item.pnlCny ?: BigDecimal.ZERO) }
+            }
+            item { BigPnlHeader("类别盈亏合计", totalPnl, incomplete) }
+            item { CategoryPnlBlock(pnl) }
+        }
+
+        historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
+        else -> item { LoadingBlock() }
+    }
+}
+
+private fun LazyListScope.flowsContent(monthly: List<MonthFlow>) {
+    val inflow = monthly.fold(BigDecimal.ZERO) { acc, flow -> acc.add(flow.inflow) }
+    val outflow = monthly.fold(BigDecimal.ZERO) { acc, flow -> acc.add(flow.outflow) }
+    val net = inflow.subtract(outflow)
+
+    item {
+        BigValueHeader(
+            label = "区间净投入",
+            value = formatCny(net),
+            color = if (net.signum() < 0) FolioGreen else FolioInk,
+        )
+    }
+    item {
+        if (monthly.isEmpty()) {
+            EmptyBlock("所选区间内没有外部本金流入/流出事件。")
+        } else {
+            WhiteBlock {
+                SummaryLine("累计投入", formatCny(inflow))
+                HorizontalDivider(color = FolioDivider)
+                SummaryLine("累计取出", formatCny(outflow))
+                HorizontalDivider(color = FolioDivider)
+                SummaryLine("净投入", formatCny(net), emphasize = true)
+                monthly.asReversed().forEach { flow ->
+                    HorizontalDivider(color = FolioDivider)
+                    FlowRowItem(flow)
                 }
             }
+        }
+    }
+}
 
-            2 -> {
-                item {
-                    SummaryCard(
-                        title = "累计投入 / 取出",
-                        rows = listOf(
-                            "累计投入" to formatCny(monthlyFlows.fold(BigDecimal.ZERO) { acc, f -> acc.add(f.inflow) }),
-                            "累计取出" to formatCny(monthlyFlows.fold(BigDecimal.ZERO) { acc, f -> acc.add(f.outflow) }),
-                            "净投入" to formatCny(
-                                monthlyFlows.fold(BigDecimal.ZERO) { acc, f ->
-                                    acc.add(f.inflow).subtract(f.outflow)
-                                },
-                            ),
-                        ),
-                    )
-                }
-                if (monthlyFlows.isEmpty()) {
-                    item { EmptyCard("暂无外部本金流入/流出事件。") }
-                } else {
-                    items(monthlyFlows) { flow ->
-                        FlowRow(flow)
+private fun LazyListScope.expensesContent(monthly: List<MonthExpense>) {
+    val total = monthly.fold(BigDecimal.ZERO) { acc, expense -> acc.add(expense.total) }
+
+    item {
+        BigValueHeader(
+            label = "区间支出合计",
+            value = formatCny(total),
+            color = FolioInk,
+        )
+    }
+    item {
+        if (monthly.isEmpty()) {
+            EmptyBlock("所选区间内没有支出事件。")
+        } else {
+            WhiteBlock {
+                monthly.asReversed().forEachIndexed { index, expense ->
+                    if (index > 0) {
+                        HorizontalDivider(color = FolioDivider)
                     }
+                    ExpenseRowItem(expense)
                 }
             }
+        }
+    }
+}
 
-            3 -> {
-                item {
-                    SummaryCard(
-                        title = "费用统计",
-                        rows = listOf(
-                            "支出合计" to formatCny(
-                                monthlyExpenses.fold(BigDecimal.ZERO) { acc, e -> acc.add(e.total) },
-                            ),
-                        ),
-                    )
-                }
-                if (monthlyExpenses.isEmpty()) {
-                    item { EmptyCard("暂无支出事件。") }
-                } else {
-                    items(monthlyExpenses) { expense ->
-                        ExpenseRow(expense)
+private fun LazyListScope.distributionContent(
+    title: String,
+    rows: List<DistributionRowData>,
+    total: BigDecimal,
+) {
+    item {
+        BigValueHeader(
+            label = "当前总资产",
+            value = formatCny(total),
+            color = FolioInk,
+        )
+    }
+    item {
+        if (rows.isEmpty()) {
+            EmptyBlock("暂无$title 数据。")
+        } else {
+            WhiteBlock {
+                rows.forEachIndexed { index, row ->
+                    if (index > 0) {
+                        HorizontalDivider(color = FolioDivider)
                     }
-                }
-            }
-
-            4 -> {
-                if (institutionRows.isEmpty()) {
-                    item { EmptyCard("暂无机构持仓。") }
-                } else {
-                    item { DistributionHeader("机构分布") }
-                    items(institutionRows) { (name, value) ->
-                        DistributionRow(name, value, snapshot.totalValueCny)
-                    }
-                }
-            }
-
-            5 -> {
-                if (currencyRows.isEmpty()) {
-                    item { EmptyCard("暂无币种暴露。") }
-                } else {
-                    item { DistributionHeader("币种分布") }
-                    items(currencyRows) { (name, value) ->
-                        DistributionRow(name, value, snapshot.totalValueCny)
-                    }
+                    DistributionRowItem(row, total)
                 }
             }
         }
@@ -325,43 +667,30 @@ fun ChartsScreen(
 }
 
 @Composable
-private fun HistorySummaryCard(
-    historyState: HistoryUiState,
-    onRetry: () -> Unit,
+private fun HistorySummary(
+    curve: List<DailyPortfolioValue>,
+    categoryPnl: List<CategoryPnl>,
 ) {
-    when (historyState) {
-        is HistoryUiState.Ready -> {
-            val ready = historyState.result
-            val start = ready.curve.firstOrNull { it.totalCny != null }?.totalCny
-            val end = ready.curve.lastOrNull { it.totalCny != null }?.totalCny
-            val change = if (start != null && end != null) end.subtract(start) else null
-            val pnlIncomplete = ready.categoryPnl.any { it.incomplete || it.pnlCny == null }
-            val pnl = if (!pnlIncomplete) {
-                ready.categoryPnl.fold(BigDecimal.ZERO) { acc, item ->
-                    acc.add(item.pnlCny ?: BigDecimal.ZERO)
-                }
-            } else {
-                null
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                BigPnlHeader(
-                    label = "区间盈亏（扣资金流）",
-                    pnl = pnl,
-                    incomplete = pnlIncomplete,
-                )
-                SummaryCard(
-                    title = "总资产曲线",
-                    rows = listOf(
-                        "期初（${ready.from}）" to formatCny(start),
-                        "期末（${ready.to}）" to formatCny(end),
-                        "曲线变化（含资金流）" to formatCny(change),
-                    ),
-                )
-            }
-        }
+    val start = curve.firstOrNull { it.totalCny != null }?.totalCny
+    val end = curve.lastOrNull { it.totalCny != null }?.totalCny
+    val change = if (start != null && end != null) end.subtract(start) else null
+    val incomplete = categoryPnl.any { it.incomplete || it.pnlCny == null }
+    val pnl = if (!incomplete) {
+        categoryPnl.fold(BigDecimal.ZERO) { acc, item -> acc.add(item.pnlCny ?: BigDecimal.ZERO) }
+    } else {
+        null
+    }
 
-        is HistoryUiState.Error -> ErrorCard(historyState.message, onRetry)
-        else -> LoadingCard()
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        BigPnlHeader(label = "区间盈亏（扣资金流）", pnl = pnl, incomplete = incomplete)
+        WhiteBlock {
+            Spacer(modifier = Modifier.height(4.dp))
+            SummaryLine("期初", formatCny(start))
+            HorizontalDivider(color = FolioDivider)
+            SummaryLine("期末", formatCny(end))
+            HorizontalDivider(color = FolioDivider)
+            SummaryLine("曲线变化（含资金流）", formatCny(change), emphasize = true)
+        }
     }
 }
 
@@ -369,31 +698,31 @@ private fun HistorySummaryCard(
 private fun HistoryLineChart(curve: List<DailyPortfolioValue>) {
     val values = curve.mapNotNull { it.totalCny }
     if (values.isEmpty()) {
-        EmptyCard("没有可用的历史价格，暂时无法绘制曲线。")
+        EmptyBlock("没有可用的历史价格，暂时无法绘制曲线。")
         return
     }
     val minValue = values.minOrNull() ?: BigDecimal.ZERO
     val maxValue = values.maxOrNull() ?: BigDecimal.ZERO
-    val lineColor = MaterialTheme.colorScheme.primary
-    val gridColor = MaterialTheme.colorScheme.outlineVariant
+    val lineColor = FolioGold
+    val gridColor = FolioDivider
     val minFloat = minValue.toFloat()
     val maxFloat = maxValue.toFloat()
-    val span = (maxFloat - minFloat).takeIf { it > 0f } ?: 1f
+    val flat = maxFloat - minFloat <= 0f
+    val span = if (flat) 1f else maxFloat - minFloat
+    val singlePoint = values.size == 1
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+    WhiteBlock {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(220.dp),
+                    .height(210.dp),
             ) {
-                val padding = 8.dp.toPx()
+                val padding = 6.dp.toPx()
                 val chartWidth = size.width - padding * 2
                 val chartHeight = size.height - padding * 2
                 val stepX = if (curve.size > 1) chartWidth / (curve.size - 1) else 0f
+                val bottom = padding + chartHeight
 
                 repeat(3) { index ->
                     val y = padding + chartHeight * (index / 2f)
@@ -405,36 +734,67 @@ private fun HistoryLineChart(curve: List<DailyPortfolioValue>) {
                     )
                 }
 
-                var path = Path()
-                var started = false
-                curve.forEachIndexed { index, point ->
-                    val value = point.totalCny ?: run {
-                        if (started) {
-                            drawPath(path, color = lineColor, style = Stroke(width = 2.dp.toPx()))
-                            path = Path()
-                            started = false
-                        }
-                        return@forEachIndexed
-                    }
-                    val x = padding + stepX * index
-                    val normalized = (value.toFloat() - minFloat) / span
-                    val y = padding + chartHeight * (1f - normalized)
-                    if (!started) {
-                        path.moveTo(x, y)
-                        started = true
-                    } else {
-                        path.lineTo(x, y)
-                    }
-                    drawCircle(
-                        color = lineColor,
-                        radius = 1.5.dp.toPx(),
-                        center = Offset(x, y),
+                if (singlePoint) {
+                    val y = padding + chartHeight / 2f
+                    drawLine(
+                        color = lineColor.copy(alpha = 0.35f),
+                        start = Offset(padding, y),
+                        end = Offset(padding + chartWidth, y),
+                        strokeWidth = 1.dp.toPx(),
                     )
                 }
-                if (started) {
-                    drawPath(path, color = lineColor, style = Stroke(width = 2.dp.toPx()))
+
+                val gradient = Brush.verticalGradient(
+                    colors = listOf(lineColor.copy(alpha = 0.24f), Color.Transparent),
+                    startY = padding,
+                    endY = bottom,
+                )
+                val segment = mutableListOf<Offset>()
+
+                fun flushSegment() {
+                    if (segment.size >= 2) {
+                        val line = Path()
+                        line.moveTo(segment.first().x, segment.first().y)
+                        segment.drop(1).forEach { point -> line.lineTo(point.x, point.y) }
+                        val fill = Path()
+                        fill.addPath(line)
+                        fill.lineTo(segment.last().x, bottom)
+                        fill.lineTo(segment.first().x, bottom)
+                        fill.close()
+                        drawPath(fill, brush = gradient)
+                        drawPath(line, color = lineColor, style = Stroke(width = 2.dp.toPx()))
+                    } else if (segment.size == 1) {
+                        drawCircle(
+                            color = lineColor,
+                            radius = 2.dp.toPx(),
+                            center = segment.first(),
+                        )
+                    }
+                    segment.clear()
                 }
+
+                curve.forEachIndexed { index, point ->
+                    val value = point.totalCny
+                    if (value == null) {
+                        flushSegment()
+                        return@forEachIndexed
+                    }
+                    val x = if (singlePoint) {
+                        padding + chartWidth / 2f
+                    } else {
+                        padding + stepX * index
+                    }
+                    val normalized = if (flat) {
+                        0.5f
+                    } else {
+                        (value.toFloat() - minFloat) / span
+                    }
+                    val y = padding + chartHeight * (1f - normalized)
+                    segment.add(Offset(x, y))
+                }
+                flushSegment()
             }
+            Spacer(modifier = Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -442,20 +802,21 @@ private fun HistoryLineChart(curve: List<DailyPortfolioValue>) {
                 Text(
                     text = curve.firstOrNull()?.date?.toString() ?: "",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = FolioMuted,
                 )
                 Text(
                     text = curve.lastOrNull()?.date?.toString() ?: "",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = FolioMuted,
                 )
             }
+            Spacer(modifier = Modifier.height(4.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("最低 ${formatCny(minValue)}", style = MaterialTheme.typography.bodySmall)
-                Text("最高 ${formatCny(maxValue)}", style = MaterialTheme.typography.bodySmall)
+                Text("最低 ${formatCny(minValue)}", style = MaterialTheme.typography.bodySmall, color = FolioMuted)
+                Text("最高 ${formatCny(maxValue)}", style = MaterialTheme.typography.bodySmall, color = FolioMuted)
             }
         }
     }
@@ -463,24 +824,22 @@ private fun HistoryLineChart(curve: List<DailyPortfolioValue>) {
 
 @Composable
 private fun BigPnlHeader(label: String, pnl: BigDecimal?, incomplete: Boolean) {
-    val color = when {
-        pnl == null -> FolioMuted
-        pnl.signum() > 0 -> FolioCoral
-        pnl.signum() < 0 -> FolioGreen
-        else -> FolioMuted
-    }
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+    val color = pnlColor(pnl)
+    Column(modifier = Modifier.padding(top = 4.dp)) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = FolioMuted,
         )
+        Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = if (pnl != null) formatCny(pnl) else "--",
             style = MaterialTheme.typography.headlineLarge,
+            fontWeight = FontWeight.SemiBold,
             color = color,
         )
         if (incomplete) {
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = "数据不完整（缺少历史价格）",
                 style = MaterialTheme.typography.bodySmall,
@@ -491,53 +850,100 @@ private fun BigPnlHeader(label: String, pnl: BigDecimal?, incomplete: Boolean) {
 }
 
 @Composable
-private fun PnlRow(pnl: CategoryPnl, maxAbs: BigDecimal) {
-    val value = pnl.pnlCny
-    val color = when {
-        value == null -> FolioMuted
-        value.signum() > 0 -> FolioCoral
-        value.signum() < 0 -> FolioGreen
-        else -> FolioMuted
+private fun BigValueHeader(label: String, value: String, color: Color) {
+    Column(modifier = Modifier.padding(top = 4.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = FolioMuted,
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.headlineLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = color,
+        )
     }
+}
+
+@Composable
+private fun CategoryPnlBlock(rows: List<CategoryPnl>) {
+    val maxAbs = rows.mapNotNull { it.pnlCny?.abs() }.maxOrNull() ?: BigDecimal.ZERO
+    val totalAbs = rows.mapNotNull { it.pnlCny?.abs() }
+        .fold(BigDecimal.ZERO) { acc, value -> acc.add(value) }
+
+    WhiteBlock {
+        rows.forEachIndexed { index, row ->
+            if (index > 0) {
+                HorizontalDivider(modifier = Modifier.padding(start = 16.dp), color = FolioDivider)
+            }
+            CategoryPnlRow(row, maxAbs, totalAbs)
+        }
+    }
+}
+
+@Composable
+private fun CategoryPnlRow(
+    pnl: CategoryPnl,
+    maxAbs: BigDecimal,
+    totalAbs: BigDecimal,
+) {
+    val value = pnl.pnlCny
+    val color = pnlColor(value)
     val fraction = if (value != null && maxAbs.signum() > 0) {
         value.abs().toFloat() / maxAbs.toFloat()
     } else {
         0f
     }
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(1.dp, FolioDivider),
+    val share = if (value != null && totalAbs.signum() > 0) {
+        value.abs().divide(totalAbs, 6, java.math.RoundingMode.HALF_UP)
+    } else {
+        null
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Text(pnl.categoryName, style = MaterialTheme.typography.bodyMedium)
-                    if (pnl.incomplete) {
-                        Text(
-                            "数据不完整（缺少历史价格）",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = FolioCoral,
-                        )
-                    }
-                }
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(color.copy(alpha = 0.10f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = categoryIcon(pnl.categoryId),
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = formatCny(value),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = color,
+                    text = pnl.categoryName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = FolioInk,
                 )
+                if (share != null) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = formatPercent(share),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FolioMuted,
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(6.dp))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(6.dp)
+                    .height(5.dp)
                     .clip(RoundedCornerShape(3.dp))
                     .background(Color(0xFFF1F1F1)),
             ) {
@@ -548,229 +954,187 @@ private fun PnlRow(pnl: CategoryPnl, maxAbs: BigDecimal) {
                         .background(color),
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun LoadingCard() {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CircularProgressIndicator()
-            Spacer(modifier = Modifier.padding(6.dp))
-            Text("正在获取历史行情…", style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
-private fun ErrorCard(message: String, onRetry: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-            )
-            TextButton(onClick = onRetry) {
-                Text("重试")
-            }
-        }
-    }
-}
-
-@Composable
-private fun LogsCard(logs: List<String>) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text("历史行情日志", style = MaterialTheme.typography.titleSmall)
-            logs.takeLast(10).forEach { line ->
+            if (pnl.incomplete) {
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = line,
+                    text = "数据不完整（缺少历史价格）",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = FolioCoral,
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun InfoCard(title: String, body: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                body,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun EmptyCard(text: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
+        Spacer(modifier = Modifier.width(12.dp))
         Text(
-            text = text,
-            modifier = Modifier.padding(16.dp),
-            style = MaterialTheme.typography.bodyMedium,
+            text = formatCny(value),
+            style = MaterialTheme.typography.titleSmall,
+            color = color,
         )
     }
 }
 
 @Composable
-private fun SummaryCard(title: String, rows: List<Pair<String, String>>) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(1.dp, FolioDivider),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(6.dp))
-            rows.forEach { (label, value) ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(label, style = MaterialTheme.typography.bodyMedium)
-                    Text(value, style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FlowRow(flow: MonthFlow) {
+private fun FlowRowItem(flow: MonthFlow) {
     val net = flow.inflow.subtract(flow.outflow)
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(flow.month.toString(), style = MaterialTheme.typography.titleSmall)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("投入 ${formatCny(flow.inflow)}", style = MaterialTheme.typography.bodySmall)
-                Text("取出 ${formatCny(flow.outflow)}", style = MaterialTheme.typography.bodySmall)
-                Text("净 ${formatCny(net)}", style = MaterialTheme.typography.bodySmall)
-            }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "${flow.month.year} 年 ${flow.month.monthValue} 月",
+                style = MaterialTheme.typography.bodyLarge,
+                color = FolioInk,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "投入 ${formatCny(flow.inflow)} · 取出 ${formatCny(flow.outflow)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = FolioMuted,
+            )
         }
+        Text(
+            text = formatCny(net),
+            style = MaterialTheme.typography.titleSmall,
+            color = if (net.signum() < 0) FolioGreen else FolioInk,
+        )
     }
 }
 
 @Composable
-private fun ExpenseRow(expense: MonthExpense) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+private fun ExpenseRowItem(expense: MonthExpense) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(expense.month.toString(), style = MaterialTheme.typography.titleSmall)
-                Text(formatCny(expense.total), style = MaterialTheme.typography.titleSmall)
-            }
-            expense.byCategory.forEach { (category, value) ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(category, style = MaterialTheme.typography.bodySmall)
-                    Text(formatCny(value), style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DistributionHeader(title: String) {
-    Text(title, style = MaterialTheme.typography.titleMedium)
-}
-
-@Composable
-private fun DistributionRow(name: String, value: BigDecimal, total: BigDecimal) {
-    val share = if (total.signum() > 0) value.divide(total, 6, java.math.RoundingMode.HALF_UP) else BigDecimal.ZERO
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(name, style = MaterialTheme.typography.bodyMedium)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "${expense.month.year} 年 ${expense.month.monthValue} 月",
+                style = MaterialTheme.typography.bodyLarge,
+                color = FolioInk,
+            )
+            if (expense.byCategory.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    "${formatCny(value)} · ${formatPercent(share)}",
+                    text = expense.byCategory.entries.joinToString(" · ") {
+                        "${it.key} ${formatCny(it.value)}"
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = FolioMuted,
                 )
             }
-            Spacer(modifier = Modifier.height(4.dp))
-            LinearProgressIndicator(
-                progress = { share.toFloat().coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth(),
+        }
+        Text(
+            text = formatCny(expense.total),
+            style = MaterialTheme.typography.titleSmall,
+            color = FolioInk,
+        )
+    }
+}
+
+@Composable
+private fun DistributionRowItem(row: DistributionRowData, total: BigDecimal) {
+    val share = if (total.signum() > 0) {
+        row.value.divide(total, 6, java.math.RoundingMode.HALF_UP)
+    } else {
+        BigDecimal.ZERO
+    }
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(row.color),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = row.name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = FolioInk,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = formatCny(row.value),
+                style = MaterialTheme.typography.titleSmall,
+                color = FolioInk,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = formatPercent(share),
+                style = MaterialTheme.typography.bodySmall,
+                color = FolioMuted,
+            )
+        }
+        Spacer(modifier = Modifier.height(7.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(5.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(Color(0xFFF1F1F1)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(share.toFloat().coerceIn(0f, 1f))
+                    .fillMaxHeight()
+                    .background(row.color),
             )
         }
     }
 }
 
 @Composable
-private fun CategoryTable(snapshot: PortfolioSnapshot) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("当前类别金额", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(6.dp))
-            snapshot.categories.forEach { category ->
+private fun CategoryTable(snapshot: PortfolioSnapshot, onlyCategoryId: String? = null) {
+    val categories = remember(snapshot.categories, onlyCategoryId) {
+        if (onlyCategoryId == null) {
+            snapshot.categories
+        } else {
+            snapshot.categories.filter { it.category.id == onlyCategoryId }
+        }
+    }
+    WhiteBlock {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            SectionTitle("当前类别金额")
+            categories.forEach { category ->
+                val color = runCatching {
+                    Color(android.graphics.Color.parseColor(category.category.color))
+                }.getOrElse { FolioGold }
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(color),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = category.category.name,
                         style = MaterialTheme.typography.bodyMedium,
+                        color = FolioInk,
+                        modifier = Modifier.weight(1f),
                     )
                     Text(
-                        text = formatCny(category.valueCny) + " · " + formatPercent(category.share),
+                        text = formatCny(category.valueCny),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = FolioInk,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = formatPercent(category.share),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = FolioMuted,
                     )
                 }
             }
@@ -778,9 +1142,170 @@ private fun CategoryTable(snapshot: PortfolioSnapshot) {
     }
 }
 
-private fun monthlyFlows(data: PortfolioData): List<MonthFlow> {
+@Composable
+private fun WhiteBlock(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = Color.White,
+    ) {
+        Column(content = content)
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleMedium,
+        color = FolioInk,
+        modifier = Modifier.padding(bottom = 6.dp),
+    )
+}
+
+@Composable
+private fun SummaryLine(label: String, value: String, emphasize: Boolean = false) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (emphasize) FolioInk else FolioMuted,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = if (emphasize) {
+                MaterialTheme.typography.titleSmall
+            } else {
+                MaterialTheme.typography.bodyMedium
+            },
+            color = FolioInk,
+        )
+    }
+}
+
+@Composable
+private fun LoadingBlock() {
+    WhiteBlock {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+                color = FolioGold,
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text("正在获取历史行情…", style = MaterialTheme.typography.bodyMedium, color = FolioMuted)
+        }
+    }
+}
+
+@Composable
+private fun ErrorBlock(message: String, onRetry: () -> Unit) {
+    WhiteBlock {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = FolioCoral,
+            )
+            TextButton(onClick = onRetry) {
+                Text("重试", color = FolioGold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyBlock(text: String) {
+    WhiteBlock {
+        Text(
+            text = text,
+            modifier = Modifier.padding(16.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = FolioMuted,
+        )
+    }
+}
+
+private fun pnlColor(pnl: BigDecimal?): Color = when {
+    pnl == null -> FolioMuted
+    pnl.signum() > 0 -> FolioCoral
+    pnl.signum() < 0 -> FolioGreen
+    else -> FolioMuted
+}
+
+private fun categoryIcon(categoryId: String): ImageVector = when (categoryId) {
+    CategoryIds.DIVIDEND -> Icons.Outlined.Savings
+    CategoryIds.GROWTH -> Icons.AutoMirrored.Outlined.TrendingUp
+    CategoryIds.US_EQUITY -> Icons.Outlined.Public
+    CategoryIds.US_BOND -> Icons.Outlined.AccountBalance
+    CategoryIds.CN_BOND -> Icons.Outlined.Payments
+    CategoryIds.GOLD -> Icons.Outlined.Diamond
+    CategoryIds.CASH -> Icons.Outlined.AccountBalanceWallet
+    else -> Icons.AutoMirrored.Outlined.ShowChart
+}
+
+private fun institutionRows(
+    snapshot: PortfolioSnapshot,
+    data: PortfolioData,
+): List<DistributionRowData> {
+    val palette = listOf(
+        FolioGold,
+        FolioCoral,
+        Color(0xFF0984E3),
+        Color(0xFF6C5CE7),
+        FolioGreen,
+        Color(0xFFB2BEC3),
+    )
+    return snapshot.brokerValues
+        .map { (id, value) ->
+            val institution = data.institutions.firstOrNull { it.id == id }
+            val name = institution?.chartAlias ?: institution?.name ?: id
+            name to value
+        }
+        .sortedByDescending { it.second }
+        .mapIndexed { index, (name, value) ->
+            DistributionRowData(name, value, palette[index % palette.size])
+        }
+}
+
+private fun currencyRows(snapshot: PortfolioSnapshot): List<DistributionRowData> {
+    val colors = mapOf(
+        "CNY" to FolioGold,
+        "USD" to Color(0xFF0984E3),
+        "HKD" to Color(0xFF6C5CE7),
+        "PHYSICAL_GOLD" to Color(0xFFF9CA24),
+    )
+    return snapshot.currencyValues
+        .map { (currency, value) ->
+            val name = when (currency) {
+                "CNY" -> "人民币"
+                "USD" -> "美元"
+                "HKD" -> "港元"
+                "PHYSICAL_GOLD" -> "实物黄金"
+                else -> currency
+            }
+            DistributionRowData(name, value, colors[currency] ?: FolioMuted)
+        }
+        .sortedByDescending { it.value }
+}
+
+private fun monthlyFlows(data: PortfolioData, range: DateRange): List<MonthFlow> {
     val map = linkedMapOf<YearMonth, MutableList<ExternalEvent>>()
     data.events.filterIsInstance<ExternalEvent>().forEach { event ->
+        val date = event.localDate()
+        if (date.isBefore(range.from) || date.isAfter(range.to)) return@forEach
         val month = YearMonth.from(parseEventTime(event.date))
         map.getOrPut(month) { mutableListOf() }.add(event)
     }
@@ -803,9 +1328,12 @@ private fun monthlyFlows(data: PortfolioData): List<MonthFlow> {
 private fun monthlyExpenses(
     data: PortfolioData,
     categoryNames: Map<String, String>,
+    range: DateRange,
 ): List<MonthExpense> {
     val map = linkedMapOf<YearMonth, MutableMap<String, BigDecimal>>()
     data.events.filterIsInstance<ExpenseEvent>().forEach { event ->
+        val date = event.localDate()
+        if (date.isBefore(range.from) || date.isAfter(range.to)) return@forEach
         val month = YearMonth.from(parseEventTime(event.date))
         val categories = map.getOrPut(month) { linkedMapOf() }
         val name = categoryNames[event.categoryId] ?: event.categoryId

@@ -1,7 +1,7 @@
 package com.jimbozhang.folioprism.ui.transactions
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,24 +16,22 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ReceiptLong
-import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Flag
-import androidx.compose.material.icons.filled.Payments
-import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,8 +44,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jimbozhang.folioprism.domain.calc.eventComparator
+import com.jimbozhang.folioprism.domain.calc.localDate
 import com.jimbozhang.folioprism.domain.model.AdjustmentEvent
 import com.jimbozhang.folioprism.domain.model.Event
 import com.jimbozhang.folioprism.domain.model.ExpenseEvent
@@ -61,15 +61,36 @@ import com.jimbozhang.folioprism.domain.model.PositionRef
 import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
-import com.jimbozhang.folioprism.ui.components.FolioFilterChip
+import com.jimbozhang.folioprism.ui.components.FilterDropdown
 import com.jimbozhang.folioprism.ui.components.formatCny
 import com.jimbozhang.folioprism.ui.components.formatNative
 import com.jimbozhang.folioprism.ui.components.formatQuantity
+import com.jimbozhang.folioprism.ui.theme.FolioBlue
 import com.jimbozhang.folioprism.ui.theme.FolioCoral
+import com.jimbozhang.folioprism.ui.theme.FolioDivider
 import com.jimbozhang.folioprism.ui.theme.FolioGold
 import com.jimbozhang.folioprism.ui.theme.FolioGreen
 import com.jimbozhang.folioprism.ui.theme.FolioInk
 import com.jimbozhang.folioprism.ui.theme.FolioMuted
+import com.jimbozhang.folioprism.ui.theme.FolioPurple
+import java.math.BigDecimal
+import java.time.LocalDate
+import java.time.format.TextStyle
+import java.util.Locale
+
+private val eventTypeOptions = listOf(
+    "transfer" to "转账",
+    "income" to "收益",
+    "external" to "外部",
+    "expense" to "支出",
+    "opening" to "期初",
+    "adjustment" to "调整",
+)
+
+private data class EventDay(
+    val date: LocalDate,
+    val events: List<Event>,
+)
 
 @Composable
 fun TransactionsScreen(
@@ -90,6 +111,10 @@ fun TransactionsScreen(
     val filtered = remember(sorted, typeFilter) {
         if (typeFilter == null) sorted else sorted.filter { it.filterKey() == typeFilter }
     }
+    val days = remember(filtered) {
+        filtered.groupBy { it.localDate() }
+            .map { (date, events) -> EventDay(date, events) }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -100,40 +125,24 @@ fun TransactionsScreen(
                 top = contentPadding.calculateTopPadding() + 16.dp,
                 bottom = contentPadding.calculateBottomPadding() + 96.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
-                Text(
-                    text = "交易",
-                    style = MaterialTheme.typography.headlineSmall,
-                )
-            }
-            item {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    FolioFilterChip(
-                        selected = typeFilter == null,
-                        onClick = { typeFilter = null },
-                        label = "全部",
+                    Text(
+                        text = "交易",
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.weight(1f),
                     )
-                    listOf(
-                        "transfer" to "转账",
-                        "income" to "收益",
-                        "external" to "外部",
-                        "expense" to "支出",
-                        "opening" to "期初",
-                        "adjustment" to "调整",
-                    ).forEach { (key, label) ->
-                        FolioFilterChip(
-                            selected = typeFilter == key,
-                            onClick = { typeFilter = key },
-                            label = label,
-                        )
-                    }
+                    FilterDropdown(
+                        selectedId = typeFilter,
+                        allId = "all",
+                        options = eventTypeOptions,
+                        onSelected = { typeFilter = it },
+                    )
                 }
             }
             if (filtered.isEmpty()) {
@@ -146,7 +155,7 @@ fun TransactionsScreen(
                     ) {
                         Text(
                             text = if (sorted.isEmpty()) {
-                                "暂无事件。点击右下角「+」录入第一笔。"
+                                "暂无事件。"
                             } else {
                                 "当前筛选下没有事件。"
                             },
@@ -157,20 +166,14 @@ fun TransactionsScreen(
                     }
                 }
             } else {
-                items(filtered, key = { it.id }) { event ->
-                    EventRow(
-                        event = event,
+                items(days, key = { it.date.toString() }) { day ->
+                    DayGroup(
+                        day = day,
                         data = data,
                         categoryNames = categoryNames,
-                        onEdit = {
+                        onEdit = { event ->
                             editingEvent = event
                             showEditor = true
-                        },
-                        onDelete = {
-                            val remove = linkedIdsToRemove(data, event)
-                            onUpdateData { current ->
-                                current.copy(events = current.events.filterNot { it.id in remove })
-                            }
                         },
                     )
                 }
@@ -198,6 +201,16 @@ fun TransactionsScreen(
             quotes = quotes,
             initial = editingEvent,
             onDismiss = { showEditor = false },
+            onDelete = editingEvent?.let { event ->
+                {
+                    val remove = linkedIdsToRemove(data, event)
+                    onUpdateData { current ->
+                        current.copy(events = current.events.filterNot { it.id in remove })
+                    }
+                    showEditor = false
+                    editingEvent = null
+                }
+            },
             onSave = { newEvents ->
                 val old = editingEvent
                 onUpdateData { current ->
@@ -215,86 +228,48 @@ fun TransactionsScreen(
 }
 
 @Composable
-private fun EventRow(
-    event: Event,
+private fun DayGroup(
+    day: EventDay,
     data: PortfolioData,
     categoryNames: Map<String, String>,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
+    onEdit: (Event) -> Unit,
 ) {
-    val accent = eventAccent(event)
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, com.jimbozhang.folioprism.ui.theme.FolioDivider),
-    ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.Top,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(accent.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = eventIcon(event),
-                    contentDescription = null,
-                    tint = accent,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = eventTypeLabel(event),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = FolioInk,
-                    )
-                    Row {
-                        IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
-                            Icon(
-                                Icons.Filled.Edit,
-                                contentDescription = "编辑",
-                                tint = FolioMuted,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                        IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                            Icon(
-                                Icons.Filled.Delete,
-                                contentDescription = "删除",
-                                tint = FolioMuted,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
+            Text(
+                text = dayLabel(day.date),
+                style = MaterialTheme.typography.labelMedium,
+                color = FolioMuted,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${day.events.size} 笔",
+                style = MaterialTheme.typography.labelSmall,
+                color = FolioMuted,
+            )
+        }
+        Spacer(modifier = Modifier.height(5.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        ) {
+            Column {
+                day.events.forEachIndexed { index, event ->
+                    if (index > 0) {
+                        HorizontalDivider(color = FolioDivider)
                     }
-                }
-                Text(
-                    text = event.date.take(16).replace('T', ' '),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = eventSummary(data, categoryNames, event),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = FolioInk,
-                )
-                if (event.note.isNotBlank()) {
-                    Text(
-                        text = event.note,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    EventRow(
+                        event = event,
+                        data = data,
+                        categoryNames = categoryNames,
+                        onClick = { onEdit(event) },
                     )
                 }
             }
@@ -302,21 +277,104 @@ private fun EventRow(
     }
 }
 
+@Composable
+private fun EventRow(
+    event: Event,
+    data: PortfolioData,
+    categoryNames: Map<String, String>,
+    onClick: () -> Unit,
+) {
+    val accent = eventAccent(event)
+    val secondary = eventSecondaryAmount(data, event)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(accent.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = eventIcon(event),
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = eventTypeLabel(event),
+                style = MaterialTheme.typography.bodyMedium,
+                color = FolioInk,
+                maxLines = 1,
+            )
+            Spacer(modifier = Modifier.height(1.dp))
+            Text(
+                text = eventSubtitle(data, categoryNames, event),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (event.note.isNotBlank()) {
+                Text(
+                    text = event.note,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = eventAmount(data, event),
+                style = MaterialTheme.typography.bodyMedium,
+                color = FolioInk,
+                maxLines = 1,
+            )
+            secondary?.let { (text, color) ->
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = color,
+                    maxLines = 1,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(2.dp))
+        Icon(
+            imageVector = Icons.Outlined.ChevronRight,
+            contentDescription = null,
+            tint = FolioMuted,
+            modifier = Modifier.size(15.dp),
+        )
+    }
+}
+
 private fun eventIcon(event: Event): ImageVector = when (event) {
-    is TransferEvent -> Icons.Filled.SwapHoriz
-    is IncomeEvent -> Icons.Filled.Payments
-    is ExternalEvent -> Icons.Filled.AccountBalanceWallet
-    is ExpenseEvent -> Icons.AutoMirrored.Filled.ReceiptLong
-    is OpeningEvent -> Icons.Filled.Flag
-    is AdjustmentEvent -> Icons.Filled.Tune
+    is TransferEvent -> Icons.Outlined.SwapHoriz
+    is IncomeEvent -> Icons.Outlined.Payments
+    is ExternalEvent -> Icons.Outlined.AccountBalanceWallet
+    is ExpenseEvent -> Icons.AutoMirrored.Outlined.ReceiptLong
+    is OpeningEvent -> Icons.Outlined.Flag
+    is AdjustmentEvent -> Icons.Outlined.Tune
 }
 
 private fun eventAccent(event: Event): Color = when (event) {
     is TransferEvent -> FolioGold
     is IncomeEvent -> FolioCoral
-    is ExternalEvent -> Color(0xFF0984E3)
+    is ExternalEvent -> FolioBlue
     is ExpenseEvent -> FolioGreen
-    is OpeningEvent -> Color(0xFF6C5CE7)
+    is OpeningEvent -> FolioPurple
     is AdjustmentEvent -> FolioMuted
 }
 
@@ -331,70 +389,140 @@ private fun Event.filterKey(): String = when (this) {
 
 private fun eventTypeLabel(event: Event): String = when (event) {
     is TransferEvent -> "转账"
-    is IncomeEvent -> if (event.kind == IncomeKind.DIVIDEND) "现金分红" else "利息"
+    is IncomeEvent -> if (event.kind == IncomeKind.DIVIDEND) "分红" else "利息"
     is ExternalEvent -> if (event.direction == ExternalDirection.IN) "外部入金" else "外部出金"
     is ExpenseEvent -> "支出"
     is OpeningEvent -> "期初"
     is AdjustmentEvent -> "调整"
 }
 
-private fun eventSummary(
+private fun eventSubtitle(
     data: PortfolioData,
     categoryNames: Map<String, String>,
     event: Event,
 ): String = when (event) {
-    is TransferEvent -> {
-        val from = positionLabel(data, event.from)
-        val to = positionLabel(data, event.to)
-        "${from} → ${to} · 转出 ${formatCny(event.fromValueCny)} / 转入 ${formatCny(event.toValueCny)}"
-    }
+    is TransferEvent -> "${shortPosition(data, event.from)} → ${shortPosition(data, event.to)}"
 
     is IncomeEvent -> {
-        val source = event.source?.let { positionLabel(data, it) } ?: "外部"
-        val kind = if (event.kind == IncomeKind.DIVIDEND) "分红" else "利息"
-        "$kind · $source → ${positionLabel(data, event.destination)} · " +
-            formatNative(event.amount, event.currency) +
-            (if (event.immediateExternalWithdrawal) "（已转出）" else "")
+        val source = event.source?.let { shortPosition(data, it) } ?: "外部"
+        val path = "$source → ${shortPosition(data, event.destination)}"
+        if (event.immediateExternalWithdrawal) "$path · 已转出" else path
     }
 
+    is ExternalEvent -> shortPosition(data, event.position)
+
+    is ExpenseEvent -> {
+        val position = event.position?.let { shortPosition(data, it) } ?: "非现金损耗"
+        val category = categoryNames[event.categoryId] ?: event.categoryId
+        "$position · $category"
+    }
+
+    is OpeningEvent -> shortPosition(data, event.position)
+
+    is AdjustmentEvent -> "${shortPosition(data, event.position)} · ${event.reason}"
+}
+
+private fun eventAmount(data: PortfolioData, event: Event): String = when (event) {
+    is TransferEvent -> formatCny(event.toValueCny)
+
+    is IncomeEvent -> "+" + formatNative(event.amount, event.currency)
+
     is ExternalEvent -> {
-        val direction = if (event.direction == ExternalDirection.IN) "入金" else "出金"
-        "$direction · ${positionLabel(data, event.position)} · " +
-            formatNative(event.amount, event.currency)
+        val sign = if (event.direction == ExternalDirection.IN) "+" else "-"
+        sign + formatNative(event.amount.abs(), event.currency)
     }
 
     is ExpenseEvent -> {
-        val position = event.position?.let { positionLabel(data, it) } ?: "非现金损耗"
-        val category = categoryNames[event.categoryId] ?: event.categoryId
-        "支出 · $position · $category · " + formatNative(event.amount, event.currency)
+        val sign = if (event.amount.signum() >= 0) "-" else "+"
+        sign + formatNative(event.amount.abs(), event.currency)
     }
 
     is OpeningEvent -> {
         val instrument = data.instrument(event.position.instrumentId)
         val unit = instrument?.unit ?: "份"
-        val value = event.quantity?.let { formatQuantity(it) + " $unit" }
+        event.quantity?.let { formatQuantity(it) + " " + unit }
             ?: event.amount?.let { formatNative(it, instrument?.currency ?: "CNY") }
             ?: "--"
-        "期初 · ${positionLabel(data, event.position)} · $value"
     }
 
     is AdjustmentEvent -> {
         val instrument = data.instrument(event.position.instrumentId)
         val unit = instrument?.unit ?: "份"
-        val delta = event.deltaQuantity?.let { "份额 " + formatQuantity(it) + " $unit" }
-            ?: event.deltaAmount?.let { "金额 " + formatNative(it, instrument?.currency ?: "CNY") }
-            ?: "--"
-        "调整 · ${positionLabel(data, event.position)} · $delta · ${event.reason}"
+        when {
+            event.deltaQuantity != null ->
+                signedQuantity(event.deltaQuantity, unit)
+            event.deltaAmount != null ->
+                signedNative(event.deltaAmount, instrument?.currency ?: "CNY")
+            else -> "--"
+        }
     }
 }
 
-private fun positionLabel(data: PortfolioData, ref: PositionRef): String {
+private fun eventSecondaryAmount(
+    data: PortfolioData,
+    event: Event,
+): Pair<String, Color>? = when (event) {
+    is TransferEvent -> {
+        if (event.lossValueCny.signum() != 0) {
+            val color = if (event.lossValueCny.signum() > 0) FolioGreen else FolioCoral
+            "损耗 ${signedCny(event.lossValueCny)}" to color
+        } else {
+            null
+        }
+    }
+
+    is IncomeEvent ->
+        if (event.currency.uppercase() in setOf("CNY", "CNH")) {
+            null
+        } else {
+            "≈ ${formatCny(event.amountCny)}" to FolioMuted
+        }
+
+    is ExternalEvent ->
+        if (event.currency.uppercase() in setOf("CNY", "CNH")) {
+            null
+        } else {
+            "≈ ${formatCny(event.amountCny)}" to FolioMuted
+        }
+
+    is ExpenseEvent ->
+        if (event.currency.uppercase() in setOf("CNY", "CNH")) {
+            null
+        } else {
+            "≈ ${formatCny(event.amountCny)}" to FolioMuted
+        }
+
+    else -> null
+}
+
+private fun dayLabel(date: LocalDate): String {
+    val today = LocalDate.now()
+    val base = when {
+        date == today -> "今天 · ${date.monthValue}月${date.dayOfMonth}日"
+        date == today.minusDays(1) -> "昨天 · ${date.monthValue}月${date.dayOfMonth}日"
+        date.year == today.year -> "${date.monthValue}月${date.dayOfMonth}日"
+        else -> "${date.year}年${date.monthValue}月${date.dayOfMonth}日"
+    }
+    val weekday = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.CHINA)
+    return "$base · $weekday"
+}
+
+private fun shortPosition(data: PortfolioData, ref: PositionRef): String {
     val institution = data.institutions.firstOrNull { it.id == ref.institutionId }?.name
         ?: ref.institutionId
     val instrument = data.instrument(ref.instrumentId)
-    val instrumentLabel = instrument?.let { "${it.code} ${it.name}" } ?: ref.instrumentId
-    return "$institution · $instrumentLabel"
+    val code = instrument?.code ?: ref.instrumentId
+    return "$institution $code"
 }
+
+private fun signedCny(value: BigDecimal): String =
+    if (value.signum() < 0) "-" + formatCny(value.abs()) else formatCny(value)
+
+private fun signedNative(value: BigDecimal, currency: String): String =
+    (if (value.signum() < 0) "-" else "+") + formatNative(value.abs(), currency)
+
+private fun signedQuantity(value: BigDecimal, unit: String): String =
+    (if (value.signum() < 0) "-" else "+") + formatQuantity(value.abs()) + " " + unit
 
 private fun linkedIdsToRemove(data: PortfolioData, event: Event): Set<String> {
     val ids = mutableSetOf(event.id)

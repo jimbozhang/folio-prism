@@ -67,8 +67,7 @@ fun QuoteFailureScreen(
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = "任一必需价格获取失败时不会进入主界面。请检查网络后刷新，" +
-                "或为失败标的设置手工价格；汇率失败暂时只能重试。",
+            text = "任一必需价格获取失败时不会进入主界面。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -1,10 +1,12 @@
 package com.jimbozhang.folioprism.ui.home
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,13 +16,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -31,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +46,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jimbozhang.folioprism.data.price.LivePriceProvider
 import com.jimbozhang.folioprism.domain.calc.CategorySnapshot
@@ -65,6 +72,7 @@ import com.jimbozhang.folioprism.ui.theme.FolioGreen
 import com.jimbozhang.folioprism.ui.theme.FolioInk
 import java.math.BigDecimal
 import java.time.LocalDate
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -82,7 +90,17 @@ fun HomeScreen(
         )
     }
 
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var expandedIds by remember { mutableStateOf(setOf<String>()) }
+    val firstCategoryIndex = 2 + if (snapshot.hasMissingPrices) 1 else 0
+
+    BackHandler(enabled = listState.canScrollBackward) {
+        scope.launch { listState.animateScrollToItem(0) }
+    }
+
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 16.dp,
@@ -100,6 +118,21 @@ fun HomeScreen(
             if (snapshot.hasMissingPrices) {
                 item { MissingPricesBanner() }
             }
+            item {
+                PortfolioOverview(
+                    categories = snapshot.categories,
+                    onCategoryClick = { categoryId ->
+                        expandedIds = expandedIds + categoryId
+                        val categoryIndex = snapshot.categories
+                            .indexOfFirst { it.category.id == categoryId }
+                        if (categoryIndex >= 0) {
+                            scope.launch {
+                                listState.animateScrollToItem(firstCategoryIndex + categoryIndex)
+                            }
+                        }
+                    },
+                )
+            }
             items(snapshot.categories, key = { it.category.id }) { category ->
                 CategoryCard(
                     category = category,
@@ -107,9 +140,191 @@ fun HomeScreen(
                     quotes = quotes,
                     snapshot = snapshot,
                     positions = positions,
+                    expanded = category.category.id in expandedIds,
+                    onToggleExpanded = {
+                        val id = category.category.id
+                        expandedIds = if (id in expandedIds) {
+                            expandedIds - id
+                        } else {
+                            expandedIds + id
+                        }
+                    },
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun PortfolioOverview(
+    categories: List<CategorySnapshot>,
+    onCategoryClick: (String) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, FolioDivider),
+    ) {
+        Column(modifier = Modifier.padding(vertical = 8.dp)) {
+            Text(
+                text = "资产配置",
+                style = MaterialTheme.typography.titleMedium,
+                color = FolioInk,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+            )
+            categories.forEachIndexed { index, category ->
+                if (index > 0) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        color = FolioDivider,
+                    )
+                }
+                OverviewRow(
+                    category = category,
+                    onClick = { onCategoryClick(category.category.id) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OverviewRow(
+    category: CategorySnapshot,
+    onClick: () -> Unit,
+) {
+    val color = remember(category.category.color) { parseCategoryColor(category.category) }
+    val statusColor = if (category.inRange) FolioGreen else FolioCoral
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.width(58.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(color),
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = category.category.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = FolioInk,
+                    maxLines = 1,
+                )
+            }
+            Text(
+                text = if (category.incomplete) {
+                    "数据不完整"
+                } else {
+                    "目标 ${formatPercent(category.targetShare)}"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (category.incomplete) FolioCoral else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        OverviewBar(
+            category = category,
+            color = color,
+            modifier = Modifier
+                .weight(1f)
+                .height(14.dp),
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(
+            modifier = Modifier.width(96.dp),
+            horizontalAlignment = Alignment.End,
+        ) {
+            Text(
+                text = formatCny(category.valueCny),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = FolioInk,
+                maxLines = 1,
+            )
+            Text(
+                text = formatPercent(category.share),
+                style = MaterialTheme.typography.labelSmall,
+                color = statusColor,
+                maxLines = 1,
+            )
+        }
+        Icon(
+            imageVector = Icons.Outlined.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
+    }
+}
+
+@Composable
+private fun OverviewBar(
+    category: CategorySnapshot,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val share = category.visualShare.toFloat()
+    val target = category.visualTarget.toFloat()
+    val min = category.visualMin.toFloat()
+    val max = category.visualMax.toFloat()
+    val scale = (maxOf(share, target, min, max, 0.05f) * 1.12f).coerceIn(0.01f, 1f)
+
+    Canvas(modifier = modifier) {
+        val trackHeight = 8.dp.toPx()
+        val top = (size.height - trackHeight) / 2f
+        val radius = CornerRadius(trackHeight / 2f)
+        drawRoundRect(
+            color = Color(0xFFF1F1F1),
+            topLeft = Offset(0f, top),
+            size = Size(size.width, trackHeight),
+            cornerRadius = radius,
+        )
+        val minX = (min / scale).coerceIn(0f, 1f) * size.width
+        val maxX = (max / scale).coerceIn(0f, 1f) * size.width
+        if (maxX > minX) {
+            drawRoundRect(
+                color = FolioGreen.copy(alpha = 0.14f),
+                topLeft = Offset(minX, top),
+                size = Size(maxX - minX, trackHeight),
+                cornerRadius = radius,
+            )
+        }
+        val fillWidth = (share / scale).coerceIn(0f, 1f) * size.width
+        if (fillWidth > 0f) {
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(0f, top),
+                size = Size(fillWidth, trackHeight),
+                cornerRadius = radius,
+            )
+        }
+        if (maxX > minX) {
+            listOf(minX, maxX).forEach { x ->
+                drawLine(
+                    color = Color(0xFF9AA3A6),
+                    start = Offset(x, top - 1.5.dp.toPx()),
+                    end = Offset(x, top + trackHeight + 1.5.dp.toPx()),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+        }
+        val targetX = (target / scale).coerceIn(0f, 1f) * size.width
+        drawLine(
+            color = FolioInk.copy(alpha = 0.5f),
+            start = Offset(targetX, top - 2.dp.toPx()),
+            end = Offset(targetX, top + trackHeight + 2.dp.toPx()),
+            strokeWidth = 1.5.dp.toPx(),
+        )
     }
 }
 
@@ -181,10 +396,11 @@ private fun CategoryCard(
     quotes: QuoteSnapshot,
     snapshot: PortfolioSnapshot,
     positions: Map<PositionKey, BigDecimal>,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
 ) {
     val categoryColor = remember(category.category.color) { parseCategoryColor(category.category) }
     val statusColor = if (category.inRange) FolioGreen else FolioCoral
-    var expanded by remember(category.category.id) { mutableStateOf(false) }
     val holdings = remember(category.category.id, positions, data.instruments) {
         positions.entries
             .filter { (key, quantity) ->
@@ -220,7 +436,7 @@ private fun CategoryCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { expanded = !expanded },
+                    .clickable { onToggleExpanded() },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -376,6 +592,16 @@ private fun CategoryRangeBar(category: CategorySnapshot, color: Color) {
                 cornerRadius = radius,
             )
         }
+        if (maxX > minX) {
+            listOf(minX, maxX).forEach { x ->
+                drawLine(
+                    color = Color(0xFF9AA3A6),
+                    start = Offset(x, top - 1.5.dp.toPx()),
+                    end = Offset(x, top + trackHeight + 1.5.dp.toPx()),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+        }
         val targetX = (target / scale).coerceIn(0f, 1f) * size.width
         drawLine(
             color = FolioInk.copy(alpha = 0.45f),
@@ -410,11 +636,6 @@ private fun HoldingRow(
         else -> null
     }
     val cnyValue = snapshot.positionValues[key]
-    val share = if (snapshot.totalValueCny.signum() > 0 && cnyValue != null) {
-        SnapshotCalculator.ratio(cnyValue, snapshot.totalValueCny)
-    } else {
-        null
-    }
     val valueText = when {
         nativeValue == null -> "--"
         instrument.currency.uppercase() in setOf("USD", "HKD") ->
@@ -423,35 +644,34 @@ private fun HoldingRow(
     }
 
     Column(modifier = Modifier.padding(vertical = 9.dp)) {
+        Text(
+            text = "${instrument.code} ${instrument.name}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = FolioInk,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(3.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "${instrument.code} ${instrument.name}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = FolioInk,
-                )
-                Text(
-                    text = "$institutionName · ${formatQuantity(quantity)} ${instrument.unit}" +
-                        (price?.let { " × " + formatNative(it, instrument.currency) } ?: ""),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = valueText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = FolioInk,
-                )
-                Text(
-                    text = formatPercent(share),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                text = "$institutionName · ${formatQuantity(quantity)} ${instrument.unit}" +
+                    (price?.let { " × " + formatNative(it, instrument.currency) } ?: ""),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = valueText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -468,12 +688,6 @@ private fun EmptyHomeCard() {
                 text = "暂无数据",
                 style = MaterialTheme.typography.titleMedium,
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "在设置中添加机构与标的，或导入调试数据后再查看持仓。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
@@ -487,7 +701,7 @@ private fun MissingPricesBanner() {
         border = BorderStroke(1.dp, FolioCoral.copy(alpha = 0.25f)),
     ) {
         Text(
-            text = "部分标的价格暂不可用；接入实时行情后将显示完整估值。",
+            text = "部分标的价格缺失",
             modifier = Modifier.padding(14.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onErrorContainer,
