@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Prism outline -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,24 L86,82 L22,82 Z" />
+    <path
+        android:fillColor="#FF1E6F5C"
+        android:pathData="M54,38 L74,76 L34,76 Z" />
+
+    <!-- Refracted beams -->
+    <path
+        android:pathData="M54,46 L76,62"
+        android:strokeColor="#FFFF7675"
+        android:strokeLineCap="round"
+        android:strokeWidth="3.5" />
+    <path
+        android:pathData="M54,46 L60,68"
+        android:strokeColor="#FFF9A825"
+        android:strokeLineCap="round"
+        android:strokeWidth="3.5" />
+    <path
+        android:pathData="M54,46 L38,66"
+        android:strokeColor="#FF0984E3"
+        android:strokeLineCap="round"
+        android:strokeWidth="3.5" />
+</vector>
