@@ -20,7 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Flag
@@ -29,10 +29,10 @@ import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -69,6 +69,7 @@ import com.jimbozhang.folioprism.ui.theme.FolioBlue
 import com.jimbozhang.folioprism.ui.theme.FolioCoral
 import com.jimbozhang.folioprism.ui.theme.FolioDivider
 import com.jimbozhang.folioprism.ui.theme.FolioGold
+import com.jimbozhang.folioprism.ui.theme.FolioGoldSoft
 import com.jimbozhang.folioprism.ui.theme.FolioGreen
 import com.jimbozhang.folioprism.ui.theme.FolioInk
 import com.jimbozhang.folioprism.ui.theme.FolioMuted
@@ -115,36 +116,62 @@ fun TransactionsScreen(
         filtered.groupBy { it.localDate() }
             .map { (date, events) -> EventDay(date, events) }
     }
+    val openNewEvent: () -> Unit = {
+        editingEvent = null
+        showEditor = true
+    }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                start = 16.dp,
-                end = 16.dp,
-                top = contentPadding.calculateTopPadding() + 16.dp,
-                bottom = contentPadding.calculateBottomPadding() + 96.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = contentPadding.calculateTopPadding() + 16.dp,
+            bottom = contentPadding.calculateBottomPadding() + 16.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "交易",
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                FilterDropdown(
+                    selectedId = typeFilter,
+                    allId = "all",
+                    options = eventTypeOptions,
+                    onSelected = { typeFilter = it },
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Box(
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .clip(CircleShape)
+                        .clickable(onClick = openNewEvent),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = "交易",
-                        style = MaterialTheme.typography.headlineSmall,
-                        modifier = Modifier.weight(1f),
-                    )
-                    FilterDropdown(
-                        selectedId = typeFilter,
-                        allId = "all",
-                        options = eventTypeOptions,
-                        onSelected = { typeFilter = it },
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(FolioGoldSoft),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Add,
+                            contentDescription = "记一笔",
+                            tint = FolioGold,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
             }
+        }
             if (filtered.isEmpty()) {
                 item {
                     Card(
@@ -179,21 +206,6 @@ fun TransactionsScreen(
                 }
             }
         }
-
-        ExtendedFloatingActionButton(
-            onClick = {
-                editingEvent = null
-                showEditor = true
-            },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(20.dp),
-            containerColor = FolioGold,
-            contentColor = Color(0xFF2B1D0E),
-            icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-            text = { Text("记一笔") },
-        )
-    }
 
     if (showEditor) {
         EventEditorDialog(

@@ -2,6 +2,16 @@
 
 个人投资组合管理 Android App。显示名：**投资组合**。
 
+用一个 App 替代现有的两套工具：
+
+- invest-folio (private repo)：单文件 HTML 的实时估值 + 7 大类再平衡工具；
+- [随手记](http://www.sui.com)：投资流水记账。
+
+## 文档
+
+- [需求文档](docs/REQUIREMENTS.md)
+- [设计文档](docs/DESIGN.md)
+
 ## 项目状态
 
 **开发中。** [M0–M6](docs/DESIGN.md#10-实施里程碑) 的核心功能已可运行，并有 79 个 JVM 单元测试：
@@ -15,18 +25,6 @@
 - 交易页：按日分组的紧凑流水与全屏「记一笔」、新增/编辑/删除、类型下拉筛选、自动记录转账损耗与手续费支出；每种持仓只允许一笔期初；
 - 图表页：总资产历史曲线、类别资产（单类别）、类别盈亏、累计投入/取出、费用统计、机构分布、币种分布；图表类型和类别均使用下拉菜单，时间区间支持任意起止日期；
 - 数据固定保存在手机 `Documents/folio-prism/`，原子写入 + 5 份滚动备份；允许在 App 关闭时手工编辑 JSON。
-
-需求与设计文档：
-
-- [需求文档](docs/REQUIREMENTS.md)
-- [设计文档](docs/DESIGN.md)
-
-## 项目目标
-
-用一个 App 替代现有的两套工具：
-
-- invest-folio (private repo)：单文件 HTML 的实时估值 + 7 大类再平衡工具；
-- [随手记](http://www.sui.com)：投资流水记账。
 
 ## 数据存储
 
@@ -70,12 +68,6 @@ export PATH=$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH
 
 # 安装到已授权的手机
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
-
-调试数据：开发机本地可放置 `debug/mock-portfolio.json`（默认被 `.gitignore` 忽略，不提交），复制到手机数据目录后使用：
-
-```bash
-adb push debug/mock-portfolio.json /sdcard/Documents/folio-prism/folio-prism.json
 ```
 
 ## 目标设备
