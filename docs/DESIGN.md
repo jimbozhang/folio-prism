@@ -1124,8 +1124,6 @@ adb shell am start -n com.jimbozhang.folioprism/.MainActivity
 
 ## 10. 实施里程碑
 
-> 在用户显式确认「开始实现」前，不写业务代码。以下为确认后的实施顺序。
-
 | 里程碑 | 内容 | 验收 |
 |---|---|---|
 | M0 | 工具链（JDK/SDK/Gradle）、空 Compose 工程、安装到 Redmi | App 能在 Redmi 14C 启动 |

@@ -36,3 +36,9 @@ google-services.json
 
 # Debug
 debug/
+
+# Python Virtual Environment
+.venv/
+
+# Private Data
+private-data
