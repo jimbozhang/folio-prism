@@ -1,26 +1,37 @@
 package com.jimbozhang.folioprism.ui.transactions
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,12 +42,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.jimbozhang.folioprism.domain.calc.EventValues
+import com.jimbozhang.folioprism.domain.calc.localDate
 import com.jimbozhang.folioprism.domain.calc.parseEventTime
 import com.jimbozhang.folioprism.domain.model.AdjustmentEvent
 import com.jimbozhang.folioprism.domain.model.CategoryIds
@@ -55,17 +66,47 @@ import com.jimbozhang.folioprism.domain.model.PositionRef
 import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
-import com.jimbozhang.folioprism.ui.components.OptionChips
-import com.jimbozhang.folioprism.ui.components.PositionPicker
+import com.jimbozhang.folioprism.ui.components.PositionPickerPanel
+import com.jimbozhang.folioprism.ui.components.SingleDatePickerDialog
+import com.jimbozhang.folioprism.ui.components.SuiTabRow
+import com.jimbozhang.folioprism.ui.components.TimeOfDayPickerDialog
+import com.jimbozhang.folioprism.ui.theme.FolioCoral
 import com.jimbozhang.folioprism.ui.theme.FolioDivider
 import com.jimbozhang.folioprism.ui.theme.FolioGold
 import com.jimbozhang.folioprism.ui.theme.FolioInk
+import com.jimbozhang.folioprism.ui.theme.FolioMuted
 import java.math.BigDecimal
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
-private class EventForm(
+private const val TRANSFER_LOSS_NOTE = "转账损耗"
+private const val TRANSFER_FEE_NOTE = "转账手续费"
+
+private val eventTypeOptions = listOf(
+    "transfer" to "转账",
+    "income" to "收益",
+    "expense" to "支出",
+    "external" to "外部",
+    "opening" to "期初",
+    "adjustment" to "调整",
+)
+
+internal enum class PickerTarget(val title: String) {
+    TRANSFER_FROM("选择转出持仓"),
+    TRANSFER_TO("选择转入持仓"),
+    INCOME_SOURCE("选择来源持仓"),
+    INCOME_DESTINATION("选择入账账户"),
+    EXTERNAL_CASH("选择现金账户"),
+    EXPENSE_CASH("选择支付账户"),
+    OPENING_POSITION("选择期初持仓"),
+    ADJUSTMENT_POSITION("选择调整持仓"),
+}
+
+internal class EventForm(
     initial: Event?,
     data: PortfolioData,
 ) {
@@ -86,6 +127,7 @@ private class EventForm(
     var toQuantity by mutableStateOf("")
     var toPrice by mutableStateOf("")
     var toFx by mutableStateOf("1")
+    var transferFee by mutableStateOf("0")
 
     var incomeKind by mutableStateOf("dividend")
     var incomeHasSource by mutableStateOf(true)
@@ -116,14 +158,12 @@ private class EventForm(
 
     var openingInstitutionId by mutableStateOf<String?>(null)
     var openingInstrumentId by mutableStateOf<String?>(null)
-    var openingQuantity by mutableStateOf("")
-    var openingAmount by mutableStateOf("")
+    var openingValue by mutableStateOf("")
     var openingFx by mutableStateOf("1")
 
     var adjustmentInstitutionId by mutableStateOf<String?>(null)
     var adjustmentInstrumentId by mutableStateOf<String?>(null)
-    var adjustmentQuantity by mutableStateOf("")
-    var adjustmentAmount by mutableStateOf("")
+    var adjustmentValue by mutableStateOf("")
     var adjustmentFx by mutableStateOf("1")
     var adjustmentReason by mutableStateOf("")
 
@@ -140,6 +180,12 @@ private class EventForm(
                 toQuantity = initial.toQuantity.toPlainString()
                 toPrice = initial.toPrice?.toPlainString() ?: ""
                 toFx = initial.toFxToCny.toPlainString()
+                transferFee = data.events
+                    .filterIsInstance<ExpenseEvent>()
+                    .firstOrNull {
+                        it.linkedTransferId == initial.id && it.note == TRANSFER_FEE_NOTE
+                    }
+                    ?.amount?.toPlainString() ?: "0"
             }
 
             is IncomeEvent -> {
@@ -177,16 +223,24 @@ private class EventForm(
             is OpeningEvent -> {
                 openingInstitutionId = initial.position.institutionId
                 openingInstrumentId = initial.position.instrumentId
-                openingQuantity = initial.quantity?.toPlainString() ?: ""
-                openingAmount = initial.amount?.toPlainString() ?: ""
+                val cash = data.instrument(initial.position.instrumentId)?.kind == InstrumentKind.CASH
+                openingValue = if (cash) {
+                    initial.amount?.toPlainString() ?: ""
+                } else {
+                    initial.quantity?.toPlainString() ?: ""
+                }
                 openingFx = initial.fxToCny?.toPlainString() ?: "1"
             }
 
             is AdjustmentEvent -> {
                 adjustmentInstitutionId = initial.position.institutionId
                 adjustmentInstrumentId = initial.position.instrumentId
-                adjustmentQuantity = initial.deltaQuantity?.toPlainString() ?: ""
-                adjustmentAmount = initial.deltaAmount?.toPlainString() ?: ""
+                val cash = data.instrument(initial.position.instrumentId)?.kind == InstrumentKind.CASH
+                adjustmentValue = if (cash) {
+                    initial.deltaAmount?.toPlainString() ?: ""
+                } else {
+                    initial.deltaQuantity?.toPlainString() ?: ""
+                }
                 adjustmentFx = initial.fxToCny?.toPlainString() ?: "1"
                 adjustmentReason = initial.reason
             }
@@ -202,12 +256,21 @@ fun EventEditorDialog(
     quotes: QuoteSnapshot,
     initial: Event?,
     onDismiss: () -> Unit,
+    onDelete: (() -> Unit)? = null,
     onSave: (List<Event>) -> Unit,
 ) {
     val form = remember(initial?.id) { EventForm(initial, data) }
     var error by remember(initial?.id) { mutableStateOf<String?>(null) }
+    var picker by remember { mutableStateOf<PickerTarget?>(null) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
     val cashInstruments = remember(data.instruments) {
         data.instruments.filter { it.kind == InstrumentKind.CASH }
+    }
+    val categoryNames = remember(data.settings.categories) {
+        data.settings.categories.associate { it.id to it.name }
     }
 
     val save: () -> Unit = {
@@ -218,525 +281,361 @@ fun EventEditorDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
     ) {
         Surface(modifier = Modifier.fillMaxSize(), color = Color.White) {
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
-                    .navigationBarsPadding(),
+                    .navigationBarsPadding()
+                    .background(Color.White),
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .padding(horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = FolioInk,
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    containerColor = Color.White,
+                    contentWindowInsets = WindowInsets(0),
+                    topBar = {
+                        Column {
+                            EditorTopBar(
+                                editing = initial != null,
+                                onDismiss = onDismiss,
+                                onDelete = onDelete?.let { { showDeleteConfirm = true } },
+                                onSave = save,
+                            )
+                            SuiTabRow(
+                                tabs = eventTypeOptions.take(5),
+                                overflow = eventTypeOptions.drop(5),
+                                selected = form.type,
+                                enabled = initial == null,
+                                onSelected = {
+                                    form.type = it
+                                    error = null
+                                },
+                            )
+                            HorizontalDivider(color = FolioDivider)
+                        }
+                    },
+                    bottomBar = {
+                        EditorSaveBar(error = error, onSave = save)
+                    },
+                ) { innerPadding ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        when (form.type) {
+                            "transfer" -> TransferSection(data, quotes, form) { picker = it }
+                            "income" -> IncomeSection(data, quotes, form) { picker = it }
+                            "external" -> ExternalSection(data, quotes, form) { picker = it }
+                            "expense" -> ExpenseSection(data, quotes, form) { picker = it }
+                            "opening" -> OpeningSection(data, quotes, form) { picker = it }
+                            "adjustment" -> AdjustmentSection(data, quotes, form) { picker = it }
+                        }
+                        CommonDetails(
+                            form = form,
+                            onPickDate = { showDatePicker = true },
+                            onPickTime = { showTimePicker = true },
                         )
-                    }
-                    Text(
-                        text = if (initial == null) "记一笔" else "编辑事件",
-                        modifier = Modifier.weight(1f),
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = FolioInk,
-                    )
-                    TextButton(onClick = save) {
-                        Text("保存", color = FolioGold)
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
                 }
-                HorizontalDivider(color = FolioDivider)
 
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    OptionChips(
-                        options = listOf(
-                            "transfer" to "转账",
-                            "income" to "收益",
-                            "external" to "外部出入金",
-                            "expense" to "支出",
-                            "opening" to "期初",
-                            "adjustment" to "调整",
-                        ),
-                        selected = form.type,
-                        onSelected = { form.type = it },
-                        enabled = initial == null,
+                val target = picker
+                if (target != null) {
+                    val config = pickerConfig(target, data, quotes, form, cashInstruments)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.32f))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { picker = null },
                     )
-                    OutlinedTextField(
-                        value = form.date,
-                        onValueChange = { form.date = it; error = null },
-                        label = { Text("日期（yyyy-MM-dd HH:mm）") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
+                    PositionPickerPanel(
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                        title = config.title,
+                        institutions = data.institutions,
+                        instruments = config.instruments,
+                        categoryNames = categoryNames,
+                        selectedInstitutionId = config.institutionId,
+                        selectedInstrumentId = config.instrumentId,
+                        onSelect = config.onSelect,
+                        onDismiss = { picker = null },
                     )
-
-                    when (form.type) {
-                        "transfer" -> TransferSection(data, quotes, form)
-                        "income" -> IncomeSection(data, quotes, form, cashInstruments)
-                        "external" -> ExternalSection(data, quote = quotes, form = form, cashInstruments = cashInstruments)
-                        "expense" -> ExpenseSection(data, quotes, form, cashInstruments)
-                        "opening" -> OpeningSection(data, quotes, form)
-                        "adjustment" -> AdjustmentSection(data, quotes, form)
-                    }
-
-                    OutlinedTextField(
-                        value = form.note,
-                        onValueChange = { form.note = it },
-                        label = { Text("备注") },
-                        modifier = Modifier.fillMaxWidth(),
-                        maxLines = 3,
-                    )
-
-                    error?.let {
-                        Text(
-                            text = it,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
                 }
+            }
+        }
+    }
+
+    if (showDatePicker) {
+        val current = formDateTime(form)
+        SingleDatePickerDialog(
+            initial = current.toLocalDate(),
+            onDismiss = { showDatePicker = false },
+            onSelected = { date -> setFormDateTime(form, LocalDateTime.of(date, current.toLocalTime())) },
+        )
+    }
+    if (showTimePicker) {
+        val current = formDateTime(form)
+        TimeOfDayPickerDialog(
+            initialHour = current.hour,
+            initialMinute = current.minute,
+            onDismiss = { showTimePicker = false },
+            onSelected = { time -> setFormDateTime(form, LocalDateTime.of(current.toLocalDate(), time)) },
+        )
+    }
+    if (showDeleteConfirm && onDelete != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("删除这笔事件？") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDelete()
+                    },
+                ) {
+                    Text("删除", color = FolioCoral)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun EditorTopBar(
+    editing: Boolean,
+    onDismiss: () -> Unit,
+    onDelete: (() -> Unit)?,
+    onSave: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = FolioInk,
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            onDelete?.let { delete ->
+                IconButton(onClick = delete) {
+                    Icon(
+                        imageVector = Icons.Outlined.Delete,
+                        contentDescription = "删除",
+                        tint = FolioMuted,
+                    )
+                }
+            }
+            TextButton(onClick = onSave) {
+                Icon(
+                    imageVector = Icons.Outlined.Check,
+                    contentDescription = null,
+                    tint = FolioGold,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(modifier = Modifier.width(3.dp))
+                Text("保存", color = FolioGold)
+            }
+        }
+        Text(
+            text = if (editing) "编辑事件" else "记一笔",
+            modifier = Modifier.align(Alignment.Center),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.titleMedium,
+            color = FolioInk,
+        )
+    }
+}
+
+@Composable
+private fun EditorSaveBar(error: String?, onSave: () -> Unit) {
+    Surface(color = Color.White, shadowElevation = 8.dp) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 50.dp),
+        ) {
+            if (!error.isNullOrBlank()) {
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioCoral,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+            Button(
+                onClick = onSave,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(24.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = FolioGold,
+                    contentColor = Color(0xFF2B1D0E),
+                ),
+            ) {
+                Text("保存", style = MaterialTheme.typography.titleMedium)
             }
         }
     }
 }
 
-@Composable
-private fun TransferSection(data: PortfolioData, quotes: QuoteSnapshot, form: EventForm) {
-    PositionPicker(
-        label = "转出",
-        institutions = data.institutions,
-        instruments = data.instruments,
-        institutionId = form.fromInstitutionId,
-        instrumentId = form.fromInstrumentId,
-        onInstitutionSelected = { form.fromInstitutionId = it },
-        onInstrumentSelected = {
-            form.fromInstrumentId = it
-            if (form.fromPrice.isBlank()) {
-                form.fromPrice = quotePrice(quotes, data.instrument(it))?.toPlainString() ?: ""
-            }
-            if (form.fromFx.isBlank() || form.fromFx == "1") {
-                form.fromFx = defaultFx(quotes, data.instrument(it)?.currency ?: "CNY")
-            }
-        },
-    )
-    PositionPicker(
-        label = "转入",
-        institutions = data.institutions,
-        instruments = data.instruments,
-        institutionId = form.toInstitutionId,
-        instrumentId = form.toInstrumentId,
-        onInstitutionSelected = { form.toInstitutionId = it },
-        onInstrumentSelected = {
-            form.toInstrumentId = it
-            if (form.toPrice.isBlank()) {
-                form.toPrice = quotePrice(quotes, data.instrument(it))?.toPlainString() ?: ""
-            }
-            if (form.toFx.isBlank() || form.toFx == "1") {
-                form.toFx = defaultFx(quotes, data.instrument(it)?.currency ?: "CNY")
-            }
-        },
-    )
-    val fromInstrument = form.fromInstrumentId?.let { data.instrument(it) }
-    val toInstrument = form.toInstrumentId?.let { data.instrument(it) }
-    OutlinedTextField(
-        value = form.fromQuantity,
-        onValueChange = { form.fromQuantity = it; },
-        label = {
-            Text(
-                if (fromInstrument?.kind == InstrumentKind.CASH) "转出金额（原币）"
-                else "转出份额",
-            )
-        },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    OutlinedTextField(
-        value = form.toQuantity,
-        onValueChange = { form.toQuantity = it },
-        label = {
-            Text(
-                if (toInstrument?.kind == InstrumentKind.CASH) "转入金额（原币）"
-                else "转入份额",
-            )
-        },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    if (fromInstrument?.kind == InstrumentKind.QUOTED) {
-        OutlinedTextField(
-            value = form.fromPrice,
-            onValueChange = { form.fromPrice = it },
-            label = { Text("转出单价（${fromInstrument.currency}）") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-    if (toInstrument?.kind == InstrumentKind.QUOTED) {
-        OutlinedTextField(
-            value = form.toPrice,
-            onValueChange = { form.toPrice = it },
-            label = { Text("转入单价（${toInstrument.currency}）") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
-            value = form.fromFx,
-            onValueChange = { form.fromFx = it },
-            label = { Text("转出汇率→CNY") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-        )
-        OutlinedTextField(
-            value = form.toFx,
-            onValueChange = { form.toFx = it },
-            label = { Text("转入汇率→CNY") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-        )
-    }
-    transferPreview(data, form)?.let {
-        Text(
-            text = it,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    Text(
-        text = "转出与转入价值不相等时，会自动生成一笔损耗支出。",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-}
+private class PickerConfig(
+    val title: String,
+    val instruments: List<Instrument>,
+    val institutionId: String?,
+    val instrumentId: String?,
+    val onSelect: (String, String) -> Unit,
+)
 
-@Composable
-private fun IncomeSection(
+private fun pickerConfig(
+    target: PickerTarget,
     data: PortfolioData,
     quotes: QuoteSnapshot,
     form: EventForm,
     cashInstruments: List<Instrument>,
-) {
-    OptionChips(
-        options = listOf("dividend" to "分红", "interest" to "利息"),
-        selected = form.incomeKind,
-        onSelected = { form.incomeKind = it },
-    )
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("有来源持仓", style = MaterialTheme.typography.bodySmall)
-        Switch(
-            checked = form.incomeHasSource,
-            onCheckedChange = {
-                form.incomeHasSource = it
-                if (!it) {
-                    form.sourceInstitutionId = null
-                    form.sourceInstrumentId = null
-                }
-            },
-        )
+): PickerConfig {
+    fun prefillFx(instrumentId: String, setter: (String) -> Unit) {
+        val instrument = data.instrument(instrumentId) ?: return
+        setter(defaultFx(quotes, instrument.currency))
     }
-    if (form.incomeHasSource) {
-        PositionPicker(
-            label = "来源持仓",
-            institutions = data.institutions,
+
+    return when (target) {
+        PickerTarget.TRANSFER_FROM -> PickerConfig(
+            title = target.title,
+            instruments = data.instruments,
+            institutionId = form.fromInstitutionId,
+            instrumentId = form.fromInstrumentId,
+        ) { institutionId, instrumentId ->
+            form.fromInstitutionId = institutionId
+            form.fromInstrumentId = instrumentId
+            val instrument = data.instrument(instrumentId)
+            if (form.fromPrice.isBlank() && instrument?.kind == InstrumentKind.QUOTED) {
+                form.fromPrice = quotePrice(quotes, instrument)?.toPlainString() ?: ""
+            }
+            if (instrument != null && (form.fromFx.isBlank() || form.fromFx == "1")) {
+                form.fromFx = defaultFx(quotes, instrument.currency)
+            }
+        }
+
+        PickerTarget.TRANSFER_TO -> PickerConfig(
+            title = target.title,
+            instruments = data.instruments,
+            institutionId = form.toInstitutionId,
+            instrumentId = form.toInstrumentId,
+        ) { institutionId, instrumentId ->
+            form.toInstitutionId = institutionId
+            form.toInstrumentId = instrumentId
+            val instrument = data.instrument(instrumentId)
+            if (form.toPrice.isBlank() && instrument?.kind == InstrumentKind.QUOTED) {
+                form.toPrice = quotePrice(quotes, instrument)?.toPlainString() ?: ""
+            }
+            if (instrument != null && (form.toFx.isBlank() || form.toFx == "1")) {
+                form.toFx = defaultFx(quotes, instrument.currency)
+            }
+        }
+
+        PickerTarget.INCOME_SOURCE -> PickerConfig(
+            title = target.title,
             instruments = data.instruments,
             institutionId = form.sourceInstitutionId,
             instrumentId = form.sourceInstrumentId,
-            onInstitutionSelected = { form.sourceInstitutionId = it },
-            onInstrumentSelected = { form.sourceInstrumentId = it },
-        )
-    }
-    PositionPicker(
-        label = "入账现金账户",
-        institutions = data.institutions,
-        instruments = cashInstruments,
-        institutionId = form.incomeInstitutionId,
-        instrumentId = form.incomeInstrumentId,
-        onInstitutionSelected = { form.incomeInstitutionId = it },
-        onInstrumentSelected = {
-            form.incomeInstrumentId = it
+        ) { institutionId, instrumentId ->
+            form.sourceInstitutionId = institutionId
+            form.sourceInstrumentId = instrumentId
+        }
+
+        PickerTarget.INCOME_DESTINATION -> PickerConfig(
+            title = target.title,
+            instruments = cashInstruments,
+            institutionId = form.incomeInstitutionId,
+            instrumentId = form.incomeInstrumentId,
+        ) { institutionId, instrumentId ->
+            form.incomeInstitutionId = institutionId
+            form.incomeInstrumentId = instrumentId
             if (form.incomeFx.isBlank() || form.incomeFx == "1") {
-                form.incomeFx = defaultFx(quotes, data.instrument(it)?.currency ?: "CNY")
+                prefillFx(instrumentId) { form.incomeFx = it }
             }
-        },
-    )
-    OutlinedTextField(
-        value = form.incomeAmount,
-        onValueChange = { form.incomeAmount = it },
-        label = { Text("金额（入账币种）") },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    OutlinedTextField(
-        value = form.incomeFx,
-        onValueChange = { form.incomeFx = it },
-        label = { Text("汇率→CNY") },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("立即转出到外部消费账户", style = MaterialTheme.typography.bodySmall)
-        Switch(
-            checked = form.immediateWithdrawal,
-            onCheckedChange = { form.immediateWithdrawal = it },
-        )
-    }
-    if (form.immediateWithdrawal) {
-        OutlinedTextField(
-            value = form.externalLabel,
-            onValueChange = { form.externalLabel = it },
-            label = { Text("外部账户标签") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
+        }
 
-@Composable
-private fun ExternalSection(
-    data: PortfolioData,
-    quote: QuoteSnapshot,
-    form: EventForm,
-    cashInstruments: List<Instrument>,
-) {
-    OptionChips(
-        options = listOf("in" to "入金", "out" to "出金"),
-        selected = form.externalDirection,
-        onSelected = { form.externalDirection = it },
-    )
-    if (form.externalDirection == "out") {
-        OptionChips(
-            options = listOf("capital" to "本金取出", "consumption" to "消费/领出"),
-            selected = form.externalClassification,
-            onSelected = { form.externalClassification = it },
-        )
-    }
-    PositionPicker(
-        label = "现金账户",
-        institutions = data.institutions,
-        instruments = cashInstruments,
-        institutionId = form.externalInstitutionId,
-        instrumentId = form.externalInstrumentId,
-        onInstitutionSelected = { form.externalInstitutionId = it },
-        onInstrumentSelected = {
-            form.externalInstrumentId = it
+        PickerTarget.EXTERNAL_CASH -> PickerConfig(
+            title = target.title,
+            instruments = cashInstruments,
+            institutionId = form.externalInstitutionId,
+            instrumentId = form.externalInstrumentId,
+        ) { institutionId, instrumentId ->
+            form.externalInstitutionId = institutionId
+            form.externalInstrumentId = instrumentId
             if (form.externalFx.isBlank() || form.externalFx == "1") {
-                form.externalFx = defaultFx(quote, data.instrument(it)?.currency ?: "CNY")
+                prefillFx(instrumentId) { form.externalFx = it }
             }
-        },
-    )
-    OutlinedTextField(
-        value = form.externalAmount,
-        onValueChange = { form.externalAmount = it },
-        label = { Text("金额（原币）") },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    OutlinedTextField(
-        value = form.externalFx,
-        onValueChange = { form.externalFx = it },
-        label = { Text("汇率→CNY") },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-}
+        }
 
-@Composable
-private fun ExpenseSection(
-    data: PortfolioData,
-    quotes: QuoteSnapshot,
-    form: EventForm,
-    cashInstruments: List<Instrument>,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("非现金损耗（无现金账户）", style = MaterialTheme.typography.bodySmall)
-        Switch(
-            checked = form.expenseNoPosition,
-            onCheckedChange = {
-                form.expenseNoPosition = it
-                if (it) {
-                    form.expenseInstitutionId = null
-                    form.expenseInstrumentId = null
-                }
-            },
-        )
-    }
-    if (!form.expenseNoPosition) {
-        PositionPicker(
-            label = "支付现金账户",
-            institutions = data.institutions,
+        PickerTarget.EXPENSE_CASH -> PickerConfig(
+            title = target.title,
             instruments = cashInstruments,
             institutionId = form.expenseInstitutionId,
             instrumentId = form.expenseInstrumentId,
-            onInstitutionSelected = { form.expenseInstitutionId = it },
-            onInstrumentSelected = {
-                form.expenseInstrumentId = it
-                if (form.expenseFx.isBlank() || form.expenseFx == "1") {
-                    form.expenseFx = defaultFx(quotes, data.instrument(it)?.currency ?: "CNY")
-                }
-            },
-        )
-    }
-    OutlinedTextField(
-        value = form.expenseAmount,
-        onValueChange = { form.expenseAmount = it },
-        label = { Text("金额（可为负；非现金损耗按 CNY）") },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    if (!form.expenseNoPosition) {
-        OutlinedTextField(
-            value = form.expenseFx,
-            onValueChange = { form.expenseFx = it },
-            label = { Text("汇率→CNY") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-    Text("盈亏归属类别", style = MaterialTheme.typography.labelMedium)
-    OptionChips(
-        options = data.settings.categories.sortedBy { it.order }.map { it.id to it.name },
-        selected = form.expenseCategoryId,
-        onSelected = { form.expenseCategoryId = it },
-    )
-}
+        ) { institutionId, instrumentId ->
+            form.expenseInstitutionId = institutionId
+            form.expenseInstrumentId = instrumentId
+            if (form.expenseFx.isBlank() || form.expenseFx == "1") {
+                prefillFx(instrumentId) { form.expenseFx = it }
+            }
+        }
 
-@Composable
-private fun OpeningSection(data: PortfolioData, quotes: QuoteSnapshot, form: EventForm) {
-    PositionPicker(
-        label = "期初持仓",
-        institutions = data.institutions,
-        instruments = data.instruments,
-        institutionId = form.openingInstitutionId,
-        instrumentId = form.openingInstrumentId,
-        onInstitutionSelected = { form.openingInstitutionId = it },
-        onInstrumentSelected = {
-            form.openingInstrumentId = it
+        PickerTarget.OPENING_POSITION -> PickerConfig(
+            title = target.title,
+            instruments = data.instruments,
+            institutionId = form.openingInstitutionId,
+            instrumentId = form.openingInstrumentId,
+        ) { institutionId, instrumentId ->
+            form.openingInstitutionId = institutionId
+            form.openingInstrumentId = instrumentId
             if (form.openingFx.isBlank() || form.openingFx == "1") {
-                form.openingFx = defaultFx(quotes, data.instrument(it)?.currency ?: "CNY")
+                prefillFx(instrumentId) { form.openingFx = it }
             }
-        },
-    )
-    val instrument = form.openingInstrumentId?.let { data.instrument(it) }
-    if (instrument?.kind == InstrumentKind.CASH) {
-        OutlinedTextField(
-            value = form.openingAmount,
-            onValueChange = { form.openingAmount = it },
-            label = { Text("期初金额（原币）") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    } else {
-        OutlinedTextField(
-            value = form.openingQuantity,
-            onValueChange = { form.openingQuantity = it },
-            label = { Text("期初份额") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-    OutlinedTextField(
-        value = form.openingFx,
-        onValueChange = { form.openingFx = it },
-        label = { Text("汇率→CNY") },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-}
+        }
 
-@Composable
-private fun AdjustmentSection(data: PortfolioData, quotes: QuoteSnapshot, form: EventForm) {
-    PositionPicker(
-        label = "调整持仓",
-        institutions = data.institutions,
-        instruments = data.instruments,
-        institutionId = form.adjustmentInstitutionId,
-        instrumentId = form.adjustmentInstrumentId,
-        onInstitutionSelected = { form.adjustmentInstitutionId = it },
-        onInstrumentSelected = {
-            form.adjustmentInstrumentId = it
+        PickerTarget.ADJUSTMENT_POSITION -> PickerConfig(
+            title = target.title,
+            instruments = data.instruments,
+            institutionId = form.adjustmentInstitutionId,
+            instrumentId = form.adjustmentInstrumentId,
+        ) { institutionId, instrumentId ->
+            form.adjustmentInstitutionId = institutionId
+            form.adjustmentInstrumentId = instrumentId
             if (form.adjustmentFx.isBlank() || form.adjustmentFx == "1") {
-                form.adjustmentFx = defaultFx(quotes, data.instrument(it)?.currency ?: "CNY")
+                prefillFx(instrumentId) { form.adjustmentFx = it }
             }
-        },
-    )
-    val instrument = form.adjustmentInstrumentId?.let { data.instrument(it) }
-    if (instrument?.kind == InstrumentKind.CASH) {
-        OutlinedTextField(
-            value = form.adjustmentAmount,
-            onValueChange = { form.adjustmentAmount = it },
-            label = { Text("金额增减（可为负）") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    } else {
-        OutlinedTextField(
-            value = form.adjustmentQuantity,
-            onValueChange = { form.adjustmentQuantity = it },
-            label = { Text("份额增减（可为负）") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        }
     }
-    OutlinedTextField(
-        value = form.adjustmentFx,
-        onValueChange = { form.adjustmentFx = it },
-        label = { Text("汇率→CNY") },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    OutlinedTextField(
-        value = form.adjustmentReason,
-        onValueChange = { form.adjustmentReason = it },
-        label = { Text("原因（必填）") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
 }
 
-private fun buildEvents(
+internal fun buildEvents(
     data: PortfolioData,
     quotes: QuoteSnapshot,
     form: EventForm,
@@ -761,6 +660,20 @@ private fun buildEvents(
             val toPrice = priceFor(toInstrument, form.toPrice)
             val fromFx = fxFor(form.fromFx, fromInstrument.currency, quotes)
             val toFx = fxFor(form.toFx, toInstrument.currency, quotes)
+            val fee = nonNegative(form.transferFee, "手续费")
+            val feeCurrency = transferFeeCurrency(fromInstrument, toInstrument)
+            val feeFx = when {
+                fromInstrument.kind == InstrumentKind.CASH -> fromFx
+                toInstrument.kind == InstrumentKind.CASH -> toFx
+                else -> BigDecimal.ONE
+            }
+            val feePosition = when {
+                fromInstrument.kind == InstrumentKind.CASH ->
+                    PositionRef(fromInstitutionId, fromInstrument.id)
+                toInstrument.kind == InstrumentKind.CASH ->
+                    PositionRef(toInstitutionId, toInstrument.id)
+                else -> null
+            }
             val values = EventValues.transferValues(
                 fromQuantity = fromQuantity,
                 toQuantity = toQuantity,
@@ -792,7 +705,7 @@ private fun buildEvents(
                     id = UUID.randomUUID().toString(),
                     date = form.date,
                     createdAt = now,
-                    note = "转账损耗",
+                    note = TRANSFER_LOSS_NOTE,
                     position = null,
                     amount = values.lossValueCny,
                     currency = "CNY",
@@ -804,7 +717,24 @@ private fun buildEvents(
             } else {
                 null
             }
-            listOfNotNull(transfer, lossExpense)
+            val feeExpense = if (fee.signum() > 0) {
+                ExpenseEvent(
+                    id = UUID.randomUUID().toString(),
+                    date = form.date,
+                    createdAt = now,
+                    note = TRANSFER_FEE_NOTE,
+                    position = feePosition,
+                    amount = fee,
+                    currency = feeCurrency,
+                    fxToCny = feeFx,
+                    amountCny = fee.multiply(feeFx),
+                    categoryId = lossCategory(data, fromInstrument, toInstrument),
+                    linkedTransferId = transferId,
+                )
+            } else {
+                null
+            }
+            listOfNotNull(transfer, lossExpense, feeExpense)
         }
 
         "income" -> {
@@ -932,19 +862,24 @@ private fun buildEvents(
         "opening" -> {
             val institutionId = form.openingInstitutionId ?: error("请选择机构")
             val instrument = requireInstrument(data, form.openingInstrumentId, "标的")
+            val existingOpening = data.events
+                .filterIsInstance<OpeningEvent>()
+                .firstOrNull {
+                    it.position == PositionRef(institutionId, instrument.id) &&
+                        it.id != (initial as? OpeningEvent)?.id
+                }
+            if (existingOpening != null) {
+                error("该持仓已于 ${existingOpening.localDate()} 有一笔期初交易")
+            }
             val fx = fxFor(form.openingFx, instrument.currency, quotes)
-            val quantity: BigDecimal?
-            val amount: BigDecimal?
-            val valueCny: BigDecimal?
-            if (instrument.kind == InstrumentKind.CASH) {
-                amount = nonZero(form.openingAmount, "期初金额")
-                quantity = null
-                valueCny = amount.multiply(fx)
+            val cash = instrument.kind == InstrumentKind.CASH
+            val value = nonZero(form.openingValue, if (cash) "期初金额" else "期初份额")
+            val quantity = if (cash) null else value
+            val amount = if (cash) value else null
+            val valueCny = if (cash) {
+                value.multiply(fx)
             } else {
-                quantity = nonZero(form.openingQuantity, "期初份额")
-                amount = null
-                val price = quotePrice(quotes, instrument)
-                valueCny = price?.let { quantity.multiply(it).multiply(fx) }
+                quotePrice(quotes, instrument)?.let { value.multiply(it).multiply(fx) }
             }
             listOf(
                 OpeningEvent(
@@ -955,7 +890,7 @@ private fun buildEvents(
                     position = PositionRef(institutionId, instrument.id),
                     quantity = quantity,
                     amount = amount,
-                    price = if (instrument.kind == InstrumentKind.QUOTED) quotePrice(quotes, instrument) else null,
+                    price = if (cash) null else quotePrice(quotes, instrument),
                     fxToCny = fx,
                     valueCny = valueCny,
                 ),
@@ -967,18 +902,14 @@ private fun buildEvents(
             val instrument = requireInstrument(data, form.adjustmentInstrumentId, "标的")
             if (form.adjustmentReason.isBlank()) error("请填写调整原因")
             val fx = fxFor(form.adjustmentFx, instrument.currency, quotes)
-            val deltaQuantity: BigDecimal?
-            val deltaAmount: BigDecimal?
-            val valueCny: BigDecimal?
-            if (instrument.kind == InstrumentKind.CASH) {
-                deltaAmount = nonZero(form.adjustmentAmount, "金额增减")
-                deltaQuantity = null
-                valueCny = deltaAmount.multiply(fx)
+            val cash = instrument.kind == InstrumentKind.CASH
+            val value = nonZero(form.adjustmentValue, if (cash) "金额增减" else "份额增减")
+            val deltaQuantity = if (cash) null else value
+            val deltaAmount = if (cash) value else null
+            val valueCny = if (cash) {
+                value.multiply(fx)
             } else {
-                deltaQuantity = nonZero(form.adjustmentQuantity, "份额增减")
-                deltaAmount = null
-                val price = quotePrice(quotes, instrument)
-                valueCny = price?.let { deltaQuantity.multiply(it).multiply(fx) }
+                quotePrice(quotes, instrument)?.let { value.multiply(it).multiply(fx) }
             }
             listOf(
                 AdjustmentEvent(
@@ -989,7 +920,7 @@ private fun buildEvents(
                     position = PositionRef(institutionId, instrument.id),
                     deltaQuantity = deltaQuantity,
                     deltaAmount = deltaAmount,
-                    price = if (instrument.kind == InstrumentKind.QUOTED) quotePrice(quotes, instrument) else null,
+                    price = if (cash) null else quotePrice(quotes, instrument),
                     fxToCny = fx,
                     valueCny = valueCny,
                     reason = form.adjustmentReason,
@@ -1001,31 +932,6 @@ private fun buildEvents(
     }
 }
 
-private fun transferPreview(data: PortfolioData, form: EventForm): String? {
-    val fromInstrument = form.fromInstrumentId?.let { data.instrument(it) } ?: return null
-    val toInstrument = form.toInstrumentId?.let { data.instrument(it) } ?: return null
-    val fromQuantity = form.fromQuantity.toBigDecimalOrNull() ?: return null
-    val toQuantity = form.toQuantity.toBigDecimalOrNull() ?: return null
-    val fromPrice = if (fromInstrument.kind == InstrumentKind.QUOTED) {
-        form.fromPrice.toBigDecimalOrNull() ?: return null
-    } else {
-        null
-    }
-    val toPrice = if (toInstrument.kind == InstrumentKind.QUOTED) {
-        form.toPrice.toBigDecimalOrNull() ?: return null
-    } else {
-        null
-    }
-    val fromFx = form.fromFx.toBigDecimalOrNull() ?: return null
-    val toFx = form.toFx.toBigDecimalOrNull() ?: return null
-    val values = EventValues.transferValues(
-        fromQuantity, toQuantity, fromPrice, toPrice, fromFx, toFx,
-    )
-    return "转出价值 ¥${values.fromValueCny.setScale(2, java.math.RoundingMode.HALF_UP)}" +
-        " · 转入价值 ¥${values.toValueCny.setScale(2, java.math.RoundingMode.HALF_UP)}" +
-        " · 损耗 ¥${values.lossValueCny.setScale(2, java.math.RoundingMode.HALF_UP)}"
-}
-
 private fun requireInstrument(data: PortfolioData, id: String?, role: String): Instrument =
     data.instrument(id ?: error("请选择$role")) ?: error("$role 不存在")
 
@@ -1034,6 +940,14 @@ private fun positive(text: String, label: String): BigDecimal =
 
 private fun nonZero(text: String, label: String): BigDecimal =
     text.toBigDecimalOrNull()?.takeIf { it.signum() != 0 } ?: error("请输入有效的$label")
+
+private fun nonNegative(text: String, label: String): BigDecimal =
+    if (text.isBlank()) {
+        BigDecimal.ZERO
+    } else {
+        text.toBigDecimalOrNull()?.takeIf { it.signum() >= 0 }
+            ?: error("请输入有效的$label")
+    }
 
 private fun priceFor(instrument: Instrument, text: String): BigDecimal? =
     if (instrument.kind == InstrumentKind.QUOTED) {
@@ -1077,6 +991,14 @@ private fun prettyDate(value: OffsetDateTime): String = value.format(dateDisplay
 private fun prettyDate(iso: String): String =
     runCatching { prettyDate(parseEventTime(iso)) }.getOrElse { iso }
 
+private fun formDateTime(form: EventForm): LocalDateTime =
+    runCatching { parseEventTime(form.date).toLocalDateTime() }
+        .getOrElse { LocalDateTime.now() }
+
+private fun setFormDateTime(form: EventForm, value: LocalDateTime) {
+    form.date = value.format(dateDisplayFormat)
+}
+
 private fun Event?.typeKey(): String = when (this) {
     is TransferEvent -> "transfer"
     is IncomeEvent -> "income"
@@ -1085,4 +1007,92 @@ private fun Event?.typeKey(): String = when (this) {
     is OpeningEvent -> "opening"
     is AdjustmentEvent -> "adjustment"
     null -> "transfer"
+}
+
+internal fun transferFeeCurrency(from: Instrument?, to: Instrument?): String = when {
+    from?.kind == InstrumentKind.CASH -> from.currency
+    to?.kind == InstrumentKind.CASH -> to.currency
+    else -> "CNY"
+}
+
+internal fun heroQuantityLabel(instrument: Instrument?): String = when {
+    instrument == null -> "金额"
+    instrument.kind == InstrumentKind.CASH -> instrument.currency
+    else -> instrument.unit
+}
+
+internal fun legValueCny(
+    quantityText: String,
+    priceText: String,
+    fxText: String,
+    instrument: Instrument?,
+): BigDecimal? {
+    if (instrument == null) return null
+    val quantity = quantityText.toBigDecimalOrNull() ?: return null
+    val fx = fxText.toBigDecimalOrNull() ?: return null
+    return if (instrument.kind == InstrumentKind.CASH) {
+        quantity.multiply(fx)
+    } else {
+        val price = priceText.toBigDecimalOrNull() ?: return null
+        quantity.multiply(price).multiply(fx)
+    }
+}
+
+internal fun cnyEstimate(
+    quotes: QuoteSnapshot,
+    instrument: Instrument?,
+    quantityText: String,
+    fxText: String,
+): BigDecimal? {
+    if (instrument == null) return null
+    val quantity = quantityText.toBigDecimalOrNull() ?: return null
+    val fx = fxText.toBigDecimalOrNull() ?: return null
+    val price = if (instrument.kind == InstrumentKind.QUOTED) {
+        quotePrice(quotes, instrument) ?: return null
+    } else {
+        BigDecimal.ONE
+    }
+    return quantity.multiply(price).multiply(fx)
+}
+
+internal fun dateTimeLabels(form: EventForm): Pair<String, String> {
+    val value = formDateTime(form)
+    val date = value.toLocalDate()
+    val today = LocalDate.now()
+    val dateLabel = when {
+        date == today -> "今天 ${date.monthValue}月${date.dayOfMonth}日"
+        date == today.minusDays(1) -> "昨天 ${date.monthValue}月${date.dayOfMonth}日"
+        date.year == today.year -> "${date.monthValue}月${date.dayOfMonth}日"
+        else -> "${date.year}年${date.monthValue}月${date.dayOfMonth}日"
+    }
+    val timeLabel = value.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm"))
+    return dateLabel to timeLabel
+}
+
+internal fun setDate(form: EventForm, date: LocalDate) {
+    setFormDateTime(form, LocalDateTime.of(date, formDateTime(form).toLocalTime()))
+}
+
+internal fun setTime(form: EventForm, time: LocalTime) {
+    setFormDateTime(form, LocalDateTime.of(formDateTime(form).toLocalDate(), time))
+}
+
+internal fun swapTransferSides(form: EventForm) {
+    val fromInst = form.fromInstrumentId
+    val fromInstId = form.fromInstitutionId
+    val fromQty = form.fromQuantity
+    val fromPx = form.fromPrice
+    val fromRate = form.fromFx
+
+    form.fromInstrumentId = form.toInstrumentId
+    form.fromInstitutionId = form.toInstitutionId
+    form.fromQuantity = form.toQuantity
+    form.fromPrice = form.toPrice
+    form.fromFx = form.toFx
+
+    form.toInstrumentId = fromInst
+    form.toInstitutionId = fromInstId
+    form.toQuantity = fromQty
+    form.toPrice = fromPx
+    form.toFx = fromRate
 }

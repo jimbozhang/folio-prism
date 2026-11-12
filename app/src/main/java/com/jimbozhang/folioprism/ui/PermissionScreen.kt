@@ -41,8 +41,8 @@ fun PermissionScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Folio Prism 的数据固定保存在 Documents/folio-prism/ 目录。" +
-                    "请授予「所有文件访问」权限，以便读写数据与备份。",
+                text = "数据固定保存在 Documents/folio-prism/ 目录，" +
+                    "需要「所有文件访问」权限。",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
             )
@@ -50,12 +50,6 @@ fun PermissionScreen(
             Button(onClick = onRequestAccess) {
                 Text("打开系统授权页")
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = "授权后返回本应用即可继续。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
