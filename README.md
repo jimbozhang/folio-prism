@@ -12,12 +12,6 @@
 - [需求文档](docs/REQUIREMENTS.md)
 - [设计文档](docs/DESIGN.md)
 
-## App 图标
-
-![Folio Prism 图标](docs/icon-preview.png)
-
-淡宣纸色底、墨色三棱镜与入射光、七条扁平彩虹色带；同时提供 Android 13+ 单色主题图标。
-
 ## 项目状态
 
 [M0–M6](docs/DESIGN.md#10-实施里程碑) 的核心功能已可运行，并有 79 个 JVM 单元测试：
