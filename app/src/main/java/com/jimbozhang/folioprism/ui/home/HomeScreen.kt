@@ -409,20 +409,18 @@ private fun CategoryCard(
             }
             .sortedByDescending { (key, _) -> snapshot.positionValues[key] ?: BigDecimal.ZERO }
     }
-    val usdSubtotal = remember(holdings, quotes, snapshot) {
+    val usdSubtotal = remember(holdings, quotes) {
         var native = BigDecimal.ZERO
-        var cny = BigDecimal.ZERO
         holdings.forEach { (key, quantity) ->
             val instrument = data.instrument(key.instrumentId)
             if (instrument?.currency?.uppercase() == "USD") {
                 val price = quotes.quotes[instrument.id]?.price ?: instrument.quote.manualPrice
                 if (price != null) {
                     native = native.add(quantity.multiply(price))
-                    cny = cny.add(snapshot.positionValues[key] ?: BigDecimal.ZERO)
                 }
             }
         }
-        if (native.signum() == 0) null else native to cny
+        native.takeIf { it.signum() != 0 }
     }
 
     Card(
@@ -506,9 +504,9 @@ private fun CategoryCard(
                     style = MaterialTheme.typography.labelMedium,
                     color = statusColor,
                 )
-                usdSubtotal?.let { (native, cny) ->
+                usdSubtotal?.let { native ->
                     Text(
-                        text = "美元资产 ${formatNative(native, "USD")}（≈${formatCny(cny)}）",
+                        text = "美元资产 ${formatNative(native, "USD")}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -635,12 +633,10 @@ private fun HoldingRow(
         price != null -> quantity.multiply(price)
         else -> null
     }
-    val cnyValue = snapshot.positionValues[key]
-    val valueText = when {
-        nativeValue == null -> "--"
-        instrument.currency.uppercase() in setOf("USD", "HKD") ->
-            formatNative(nativeValue, instrument.currency) + " / " + formatCny(cnyValue)
-        else -> formatNative(nativeValue, instrument.currency)
+    val valueText = if (nativeValue == null) {
+        "--"
+    } else {
+        formatNative(nativeValue, instrument.currency)
     }
 
     Column(modifier = Modifier.padding(vertical = 9.dp)) {

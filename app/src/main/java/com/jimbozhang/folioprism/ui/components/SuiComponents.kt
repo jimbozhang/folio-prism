@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
@@ -205,6 +206,7 @@ fun FormRow(
     label: String,
     onClick: (() -> Unit)? = null,
     showChevron: Boolean = false,
+    labelWidth: Dp = 56.dp,
     contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
     trailing: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable RowScope.() -> Unit,
@@ -233,7 +235,7 @@ fun FormRow(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
             color = FolioMuted,
-            modifier = Modifier.width(56.dp),
+            modifier = Modifier.width(labelWidth),
             maxLines = 1,
         )
         Spacer(modifier = Modifier.width(8.dp))

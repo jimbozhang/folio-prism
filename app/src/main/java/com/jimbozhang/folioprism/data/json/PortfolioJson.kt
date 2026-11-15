@@ -10,7 +10,7 @@ object PortfolioJson {
 
     val json: Json = Json {
         prettyPrint = true
-        encodeDefaults = true
+        encodeDefaults = false
         ignoreUnknownKeys = false
         classDiscriminator = "type"
     }

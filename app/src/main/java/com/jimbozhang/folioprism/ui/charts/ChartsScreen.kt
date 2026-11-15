@@ -77,6 +77,7 @@ import com.jimbozhang.folioprism.domain.history.DailyPortfolioValue
 import com.jimbozhang.folioprism.domain.model.Category
 import com.jimbozhang.folioprism.domain.model.CategoryIds
 import com.jimbozhang.folioprism.domain.model.ExpenseEvent
+import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.ExternalDirection
 import com.jimbozhang.folioprism.domain.model.ExternalEvent
 import com.jimbozhang.folioprism.domain.model.PortfolioData
@@ -172,9 +173,11 @@ fun ChartsScreen(
     val selectedCategory = orderedCategories.firstOrNull { it.id == categoryId }
         ?: orderedCategories.firstOrNull()
 
-    val monthlyFlows = remember(data.events, range) { monthlyFlows(data, range) }
-    val monthlyExpenses = remember(data.events, categoryNames, range) {
-        monthlyExpenses(data, categoryNames, range)
+    val monthlyFlows = remember(data.events, range, quotes.fxRates) {
+        monthlyFlows(data, quotes.fxRates, range)
+    }
+    val monthlyExpenses = remember(data.events, categoryNames, range, quotes.fxRates) {
+        monthlyExpenses(data, categoryNames, quotes.fxRates, range)
     }
     val institutionRows = remember(snapshot.brokerValues, data.institutions) {
         institutionRows(snapshot, data)
@@ -1301,7 +1304,17 @@ private fun currencyRows(snapshot: PortfolioSnapshot): List<DistributionRowData>
         .sortedByDescending { it.value }
 }
 
-private fun monthlyFlows(data: PortfolioData, range: DateRange): List<MonthFlow> {
+private fun fxToCny(currency: String, fxRates: Map<String, BigDecimal>): BigDecimal? =
+    when (currency.uppercase()) {
+        "CNY", "CNH" -> BigDecimal.ONE
+        else -> fxRates[currency.uppercase()]
+    }
+
+private fun monthlyFlows(
+    data: PortfolioData,
+    fxRates: Map<String, BigDecimal>,
+    range: DateRange,
+): List<MonthFlow> {
     val map = linkedMapOf<YearMonth, MutableList<ExternalEvent>>()
     data.events.filterIsInstance<ExternalEvent>().forEach { event ->
         val date = event.localDate()
@@ -1315,29 +1328,64 @@ private fun monthlyFlows(data: PortfolioData, range: DateRange): List<MonthFlow>
             var inflow = BigDecimal.ZERO
             var outflow = BigDecimal.ZERO
             events.forEach { event ->
+                val amountCny = fxToCny(event.currency, fxRates)
+                    ?.let { event.amount.multiply(it) } ?: return@forEach
                 if (event.direction == ExternalDirection.IN) {
-                    inflow = inflow.add(event.amountCny)
+                    inflow = inflow.add(amountCny)
                 } else {
-                    outflow = outflow.add(event.amountCny)
+                    outflow = outflow.add(amountCny)
                 }
             }
             MonthFlow(month, inflow, outflow)
         }
 }
 
+private const val FEE_LOSS_LABEL = "手续费/损耗"
+
 private fun monthlyExpenses(
     data: PortfolioData,
     categoryNames: Map<String, String>,
+    fxRates: Map<String, BigDecimal>,
     range: DateRange,
 ): List<MonthExpense> {
     val map = linkedMapOf<YearMonth, MutableMap<String, BigDecimal>>()
+    val linkedFeeTransfers = data.events
+        .filterIsInstance<ExpenseEvent>()
+        .filter { it.linkedTransferId != null && it.note in setOf("转账手续费", "转账损耗") }
+        .mapNotNull { it.linkedTransferId }
+        .toSet()
     data.events.filterIsInstance<ExpenseEvent>().forEach { event ->
         val date = event.localDate()
         if (date.isBefore(range.from) || date.isAfter(range.to)) return@forEach
+        val amountCny = fxToCny(event.currency, fxRates)
+            ?.let { event.amount.multiply(it) } ?: return@forEach
         val month = YearMonth.from(parseEventTime(event.date))
         val categories = map.getOrPut(month) { linkedMapOf() }
         val name = categoryNames[event.categoryId] ?: event.categoryId
-        categories[name] = (categories[name] ?: BigDecimal.ZERO).add(event.amountCny)
+        categories[name] = (categories[name] ?: BigDecimal.ZERO).add(amountCny)
+    }
+    data.events.filterIsInstance<TransferEvent>().forEach { event ->
+        if (event.lossAmount.signum() == 0 && (event.feeAmount?.signum() ?: 0) == 0) {
+            return@forEach
+        }
+        // Old data records these as linked expenses; do not count them twice.
+        if (event.id in linkedFeeTransfers) return@forEach
+        val date = event.localDate()
+        if (date.isBefore(range.from) || date.isAfter(range.to)) return@forEach
+        var feeLossCny = fxToCny(event.lossCurrency, fxRates)
+            ?.let { event.lossAmount.multiply(it) } ?: BigDecimal.ZERO
+        val feeAmount = event.feeAmount
+        val feeCurrency = event.feeCurrency
+        if (feeAmount != null && feeCurrency != null) {
+            fxToCny(feeCurrency, fxRates)?.let {
+                feeLossCny = feeLossCny.add(feeAmount.multiply(it))
+            }
+        }
+        if (feeLossCny.signum() == 0) return@forEach
+        val month = YearMonth.from(parseEventTime(event.date))
+        val categories = map.getOrPut(month) { linkedMapOf() }
+        categories[FEE_LOSS_LABEL] =
+            (categories[FEE_LOSS_LABEL] ?: BigDecimal.ZERO).add(feeLossCny)
     }
     return map.entries
         .sortedBy { it.key }

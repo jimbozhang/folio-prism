@@ -22,8 +22,6 @@ data class TransferEvent(
     val to: PositionRef,
     @Serializable(with = BigDecimalAsStringSerializer::class) val fromQuantity: BigDecimal,
     @Serializable(with = BigDecimalAsStringSerializer::class) val toQuantity: BigDecimal,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val fromValueCny: BigDecimal,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val toValueCny: BigDecimal,
     override val date: String,
     override val id: String = UUID.randomUUID().toString(),
     override val createdAt: String = "",
@@ -31,9 +29,16 @@ data class TransferEvent(
     override val note: String = "",
     @Serializable(with = BigDecimalAsStringSerializer::class) val fromPrice: BigDecimal? = null,
     @Serializable(with = BigDecimalAsStringSerializer::class) val toPrice: BigDecimal? = null,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val fromFxToCny: BigDecimal = BigDecimal.ONE,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val toFxToCny: BigDecimal = BigDecimal.ONE,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val lossValueCny: BigDecimal = BigDecimal.ZERO,
+    /**
+     * Embedded fee/loss in [lossCurrency]. Positive = cost, negative = gain.
+     * A separate cash fee is stored in [feeAmount] and is not included here.
+     */
+    @Serializable(with = BigDecimalAsStringSerializer::class) val lossAmount: BigDecimal = BigDecimal.ZERO,
+    val lossCurrency: String = "CNY",
+    /** Cash account that pays the fee, only when the fee is not embedded in the transfer values. */
+    val feePosition: PositionRef? = null,
+    @Serializable(with = BigDecimalAsStringSerializer::class) val feeAmount: BigDecimal? = null,
+    val feeCurrency: String? = null,
 ) : Event()
 
 @Serializable
@@ -49,14 +54,12 @@ data class IncomeEvent(
     val destination: PositionRef,
     @Serializable(with = BigDecimalAsStringSerializer::class) val amount: BigDecimal,
     val currency: String,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val amountCny: BigDecimal,
     override val date: String,
     override val id: String = UUID.randomUUID().toString(),
     override val createdAt: String = "",
     override val updatedAt: String? = null,
     override val note: String = "",
     val source: PositionRef? = null,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val fxToCny: BigDecimal = BigDecimal.ONE,
     val immediateExternalWithdrawal: Boolean = false,
     val externalAccountLabel: String? = null,
     val linkedEventId: String? = null,
@@ -67,7 +70,6 @@ data class IncomeEvent(
 data class ExpenseEvent(
     @Serializable(with = BigDecimalAsStringSerializer::class) val amount: BigDecimal,
     val currency: String,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val amountCny: BigDecimal,
     val categoryId: String,
     override val date: String,
     override val id: String = UUID.randomUUID().toString(),
@@ -75,7 +77,6 @@ data class ExpenseEvent(
     override val updatedAt: String? = null,
     override val note: String = "",
     val position: PositionRef? = null,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val fxToCny: BigDecimal = BigDecimal.ONE,
     val linkedTransferId: String? = null,
 ) : Event()
 
@@ -99,13 +100,11 @@ data class ExternalEvent(
     val position: PositionRef,
     @Serializable(with = BigDecimalAsStringSerializer::class) val amount: BigDecimal,
     val currency: String,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val amountCny: BigDecimal,
     override val date: String,
     override val id: String = UUID.randomUUID().toString(),
     override val createdAt: String = "",
     override val updatedAt: String? = null,
     override val note: String = "",
-    @Serializable(with = BigDecimalAsStringSerializer::class) val fxToCny: BigDecimal = BigDecimal.ONE,
     val counterpartyLabel: String? = null,
 ) : Event()
 
@@ -121,8 +120,6 @@ data class OpeningEvent(
     @Serializable(with = BigDecimalAsStringSerializer::class) val quantity: BigDecimal? = null,
     @Serializable(with = BigDecimalAsStringSerializer::class) val amount: BigDecimal? = null,
     @Serializable(with = BigDecimalAsStringSerializer::class) val price: BigDecimal? = null,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val fxToCny: BigDecimal? = null,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val valueCny: BigDecimal? = null,
 ) : Event()
 
 @Serializable
@@ -138,6 +135,4 @@ data class AdjustmentEvent(
     @Serializable(with = BigDecimalAsStringSerializer::class) val deltaQuantity: BigDecimal? = null,
     @Serializable(with = BigDecimalAsStringSerializer::class) val deltaAmount: BigDecimal? = null,
     @Serializable(with = BigDecimalAsStringSerializer::class) val price: BigDecimal? = null,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val fxToCny: BigDecimal? = null,
-    @Serializable(with = BigDecimalAsStringSerializer::class) val valueCny: BigDecimal? = null,
 ) : Event()

@@ -76,6 +76,7 @@ import com.jimbozhang.folioprism.ui.theme.FolioGold
 import com.jimbozhang.folioprism.ui.theme.FolioInk
 import com.jimbozhang.folioprism.ui.theme.FolioMuted
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -98,6 +99,7 @@ private val eventTypeOptions = listOf(
 internal enum class PickerTarget(val title: String) {
     TRANSFER_FROM("选择转出持仓"),
     TRANSFER_TO("选择转入持仓"),
+    FEE_CASH("选择手续费账户"),
     INCOME_SOURCE("选择来源持仓"),
     INCOME_DESTINATION("选择入账账户"),
     EXTERNAL_CASH("选择现金账户"),
@@ -120,14 +122,15 @@ internal class EventForm(
     var fromInstrumentId by mutableStateOf<String?>(null)
     var fromQuantity by mutableStateOf("")
     var fromPrice by mutableStateOf("")
-    var fromFx by mutableStateOf("1")
 
     var toInstitutionId by mutableStateOf<String?>(null)
     var toInstrumentId by mutableStateOf<String?>(null)
     var toQuantity by mutableStateOf("")
     var toPrice by mutableStateOf("")
-    var toFx by mutableStateOf("1")
-    var transferFee by mutableStateOf("0")
+    var feeLoss by mutableStateOf("")
+    var feeFromCash by mutableStateOf(false)
+    var feeInstitutionId by mutableStateOf<String?>(null)
+    var feeInstrumentId by mutableStateOf<String?>(null)
 
     var incomeKind by mutableStateOf("dividend")
     var incomeHasSource by mutableStateOf(true)
@@ -136,7 +139,6 @@ internal class EventForm(
     var incomeInstitutionId by mutableStateOf<String?>(null)
     var incomeInstrumentId by mutableStateOf<String?>(null)
     var incomeAmount by mutableStateOf("")
-    var incomeFx by mutableStateOf("1")
     var immediateWithdrawal by mutableStateOf(false)
     var externalLabel by mutableStateOf("")
 
@@ -145,13 +147,11 @@ internal class EventForm(
     var externalInstitutionId by mutableStateOf<String?>(null)
     var externalInstrumentId by mutableStateOf<String?>(null)
     var externalAmount by mutableStateOf("")
-    var externalFx by mutableStateOf("1")
 
     var expenseNoPosition by mutableStateOf(false)
     var expenseInstitutionId by mutableStateOf<String?>(null)
     var expenseInstrumentId by mutableStateOf<String?>(null)
     var expenseAmount by mutableStateOf("")
-    var expenseFx by mutableStateOf("1")
     var expenseCategoryId by mutableStateOf(
         data.settings.categories.firstOrNull()?.id ?: CategoryIds.CASH,
     )
@@ -159,12 +159,10 @@ internal class EventForm(
     var openingInstitutionId by mutableStateOf<String?>(null)
     var openingInstrumentId by mutableStateOf<String?>(null)
     var openingValue by mutableStateOf("")
-    var openingFx by mutableStateOf("1")
 
     var adjustmentInstitutionId by mutableStateOf<String?>(null)
     var adjustmentInstrumentId by mutableStateOf<String?>(null)
     var adjustmentValue by mutableStateOf("")
-    var adjustmentFx by mutableStateOf("1")
     var adjustmentReason by mutableStateOf("")
 
     init {
@@ -174,18 +172,17 @@ internal class EventForm(
                 fromInstrumentId = initial.from.instrumentId
                 fromQuantity = initial.fromQuantity.toPlainString()
                 fromPrice = initial.fromPrice?.toPlainString() ?: ""
-                fromFx = initial.fromFxToCny.toPlainString()
                 toInstitutionId = initial.to.institutionId
                 toInstrumentId = initial.to.instrumentId
                 toQuantity = initial.toQuantity.toPlainString()
                 toPrice = initial.toPrice?.toPlainString() ?: ""
-                toFx = initial.toFxToCny.toPlainString()
-                transferFee = data.events
-                    .filterIsInstance<ExpenseEvent>()
-                    .firstOrNull {
-                        it.linkedTransferId == initial.id && it.note == TRANSFER_FEE_NOTE
-                    }
-                    ?.amount?.toPlainString() ?: "0"
+                feeLoss = initial.lossAmount.toPlainString()
+                val feePosition = initial.feePosition
+                if (feePosition != null) {
+                    feeFromCash = true
+                    feeInstitutionId = feePosition.institutionId
+                    feeInstrumentId = feePosition.instrumentId
+                }
             }
 
             is IncomeEvent -> {
@@ -196,7 +193,6 @@ internal class EventForm(
                 incomeInstitutionId = initial.destination.institutionId
                 incomeInstrumentId = initial.destination.instrumentId
                 incomeAmount = initial.amount.toPlainString()
-                incomeFx = initial.fxToCny.toPlainString()
                 immediateWithdrawal = initial.immediateExternalWithdrawal
                 externalLabel = initial.externalAccountLabel ?: ""
             }
@@ -208,7 +204,6 @@ internal class EventForm(
                 externalInstitutionId = initial.position.institutionId
                 externalInstrumentId = initial.position.instrumentId
                 externalAmount = initial.amount.toPlainString()
-                externalFx = initial.fxToCny.toPlainString()
             }
 
             is ExpenseEvent -> {
@@ -216,7 +211,6 @@ internal class EventForm(
                 expenseInstitutionId = initial.position?.institutionId
                 expenseInstrumentId = initial.position?.instrumentId
                 expenseAmount = initial.amount.toPlainString()
-                expenseFx = initial.fxToCny.toPlainString()
                 expenseCategoryId = initial.categoryId
             }
 
@@ -229,7 +223,6 @@ internal class EventForm(
                 } else {
                     initial.quantity?.toPlainString() ?: ""
                 }
-                openingFx = initial.fxToCny?.toPlainString() ?: "1"
             }
 
             is AdjustmentEvent -> {
@@ -241,7 +234,6 @@ internal class EventForm(
                 } else {
                     initial.deltaQuantity?.toPlainString() ?: ""
                 }
-                adjustmentFx = initial.fxToCny?.toPlainString() ?: "1"
                 adjustmentReason = initial.reason
             }
 
@@ -518,11 +510,6 @@ private fun pickerConfig(
     form: EventForm,
     cashInstruments: List<Instrument>,
 ): PickerConfig {
-    fun prefillFx(instrumentId: String, setter: (String) -> Unit) {
-        val instrument = data.instrument(instrumentId) ?: return
-        setter(defaultFx(quotes, instrument.currency))
-    }
-
     return when (target) {
         PickerTarget.TRANSFER_FROM -> PickerConfig(
             title = target.title,
@@ -535,9 +522,6 @@ private fun pickerConfig(
             val instrument = data.instrument(instrumentId)
             if (form.fromPrice.isBlank() && instrument?.kind == InstrumentKind.QUOTED) {
                 form.fromPrice = quotePrice(quotes, instrument)?.toPlainString() ?: ""
-            }
-            if (instrument != null && (form.fromFx.isBlank() || form.fromFx == "1")) {
-                form.fromFx = defaultFx(quotes, instrument.currency)
             }
         }
 
@@ -553,9 +537,16 @@ private fun pickerConfig(
             if (form.toPrice.isBlank() && instrument?.kind == InstrumentKind.QUOTED) {
                 form.toPrice = quotePrice(quotes, instrument)?.toPlainString() ?: ""
             }
-            if (instrument != null && (form.toFx.isBlank() || form.toFx == "1")) {
-                form.toFx = defaultFx(quotes, instrument.currency)
-            }
+        }
+
+        PickerTarget.FEE_CASH -> PickerConfig(
+            title = target.title,
+            instruments = cashInstruments,
+            institutionId = form.feeInstitutionId,
+            instrumentId = form.feeInstrumentId,
+        ) { institutionId, instrumentId ->
+            form.feeInstitutionId = institutionId
+            form.feeInstrumentId = instrumentId
         }
 
         PickerTarget.INCOME_SOURCE -> PickerConfig(
@@ -576,9 +567,6 @@ private fun pickerConfig(
         ) { institutionId, instrumentId ->
             form.incomeInstitutionId = institutionId
             form.incomeInstrumentId = instrumentId
-            if (form.incomeFx.isBlank() || form.incomeFx == "1") {
-                prefillFx(instrumentId) { form.incomeFx = it }
-            }
         }
 
         PickerTarget.EXTERNAL_CASH -> PickerConfig(
@@ -589,9 +577,6 @@ private fun pickerConfig(
         ) { institutionId, instrumentId ->
             form.externalInstitutionId = institutionId
             form.externalInstrumentId = instrumentId
-            if (form.externalFx.isBlank() || form.externalFx == "1") {
-                prefillFx(instrumentId) { form.externalFx = it }
-            }
         }
 
         PickerTarget.EXPENSE_CASH -> PickerConfig(
@@ -602,9 +587,6 @@ private fun pickerConfig(
         ) { institutionId, instrumentId ->
             form.expenseInstitutionId = institutionId
             form.expenseInstrumentId = instrumentId
-            if (form.expenseFx.isBlank() || form.expenseFx == "1") {
-                prefillFx(instrumentId) { form.expenseFx = it }
-            }
         }
 
         PickerTarget.OPENING_POSITION -> PickerConfig(
@@ -615,9 +597,6 @@ private fun pickerConfig(
         ) { institutionId, instrumentId ->
             form.openingInstitutionId = institutionId
             form.openingInstrumentId = instrumentId
-            if (form.openingFx.isBlank() || form.openingFx == "1") {
-                prefillFx(instrumentId) { form.openingFx = it }
-            }
         }
 
         PickerTarget.ADJUSTMENT_POSITION -> PickerConfig(
@@ -628,9 +607,6 @@ private fun pickerConfig(
         ) { institutionId, instrumentId ->
             form.adjustmentInstitutionId = institutionId
             form.adjustmentInstrumentId = instrumentId
-            if (form.adjustmentFx.isBlank() || form.adjustmentFx == "1") {
-                prefillFx(instrumentId) { form.adjustmentFx = it }
-            }
         }
     }
 }
@@ -658,33 +634,59 @@ internal fun buildEvents(
             val toQuantity = positive(form.toQuantity, "转入数量")
             val fromPrice = priceFor(fromInstrument, form.fromPrice)
             val toPrice = priceFor(toInstrument, form.toPrice)
-            val fromFx = fxFor(form.fromFx, fromInstrument.currency, quotes)
-            val toFx = fxFor(form.toFx, toInstrument.currency, quotes)
-            val fee = nonNegative(form.transferFee, "手续费")
-            val feeCurrency = transferFeeCurrency(fromInstrument, toInstrument)
-            val feeFx = when {
-                fromInstrument.kind == InstrumentKind.CASH -> fromFx
-                toInstrument.kind == InstrumentKind.CASH -> toFx
-                else -> BigDecimal.ONE
-            }
-            val feePosition = when {
-                fromInstrument.kind == InstrumentKind.CASH ->
-                    PositionRef(fromInstitutionId, fromInstrument.id)
-                toInstrument.kind == InstrumentKind.CASH ->
-                    PositionRef(toInstitutionId, toInstrument.id)
-                else -> null
-            }
             val values = EventValues.transferValues(
                 fromQuantity = fromQuantity,
                 toQuantity = toQuantity,
                 fromPrice = fromPrice,
                 toPrice = toPrice,
-                fromFxToCny = fromFx,
-                toFxToCny = toFx,
             )
-            val transferId = if (initial is TransferEvent) initial.id else UUID.randomUUID().toString()
+            val lossCurrency = fromInstrument.currency
+            val sameCurrency =
+                fromInstrument.currency.equals(toInstrument.currency, ignoreCase = true) ||
+                    (fromInstrument.currency.uppercase() in setOf("CNY", "CNH") &&
+                        toInstrument.currency.uppercase() in setOf("CNY", "CNH"))
+            val autoLoss = if (sameCurrency) {
+                values.fromNative.subtract(values.toNative)
+            } else {
+                BigDecimal.ZERO
+            }
+            val totalLoss = if (form.feeLoss.isBlank()) {
+                autoLoss
+            } else {
+                form.feeLoss.toBigDecimalOrNull() ?: error("请输入有效的 手续费/损耗")
+            }
+            val feeCashInstrument = if (form.feeFromCash) {
+                val feeInstrumentId = form.feeInstrumentId ?: error("请选择手续费账户")
+                requireInstrument(data, feeInstrumentId, "手续费账户")
+            } else {
+                null
+            }
+            if (feeCashInstrument != null && feeCashInstrument.kind != InstrumentKind.CASH) {
+                error("手续费账户必须是现金标的")
+            }
+            val feeCashInstitutionId = if (feeCashInstrument != null) {
+                form.feeInstitutionId ?: error("请选择手续费账户机构")
+            } else {
+                null
+            }
+            // The part not already embedded in the from/to values is paid from
+            // the separate cash account. Convert at the current FX rate.
+            val extraLoss = feeCashInstrument?.let { totalLoss.subtract(autoLoss) }
+            val feeAmount = extraLoss?.let {
+                val lossFx = currentFx(lossCurrency, quotes)
+                val feeFx = currentFx(feeCashInstrument!!.currency, quotes)
+                it.multiply(lossFx).divide(feeFx, 8, RoundingMode.HALF_UP)
+            }
+            val feePosition =
+                if (feeCashInstrument != null && feeCashInstitutionId != null &&
+                    feeAmount != null && feeAmount.signum() != 0
+                ) {
+                    PositionRef(feeCashInstitutionId, feeCashInstrument.id)
+                } else {
+                    null
+                }
             val transfer = TransferEvent(
-                id = transferId,
+                id = if (initial is TransferEvent) initial.id else UUID.randomUUID().toString(),
                 date = form.date,
                 createdAt = createdAt,
                 note = form.note,
@@ -694,47 +696,13 @@ internal fun buildEvents(
                 toQuantity = toQuantity,
                 fromPrice = fromPrice,
                 toPrice = toPrice,
-                fromFxToCny = fromFx,
-                toFxToCny = toFx,
-                fromValueCny = values.fromValueCny,
-                toValueCny = values.toValueCny,
-                lossValueCny = values.lossValueCny,
+                lossAmount = if (feeCashInstrument != null) autoLoss else totalLoss,
+                lossCurrency = lossCurrency,
+                feePosition = feePosition,
+                feeAmount = feeAmount?.takeIf { it.signum() != 0 },
+                feeCurrency = feeCashInstrument?.currency,
             )
-            val lossExpense = if (values.lossValueCny.signum() != 0) {
-                ExpenseEvent(
-                    id = UUID.randomUUID().toString(),
-                    date = form.date,
-                    createdAt = now,
-                    note = TRANSFER_LOSS_NOTE,
-                    position = null,
-                    amount = values.lossValueCny,
-                    currency = "CNY",
-                    fxToCny = BigDecimal.ONE,
-                    amountCny = values.lossValueCny,
-                    categoryId = lossCategory(data, fromInstrument, toInstrument),
-                    linkedTransferId = transferId,
-                )
-            } else {
-                null
-            }
-            val feeExpense = if (fee.signum() > 0) {
-                ExpenseEvent(
-                    id = UUID.randomUUID().toString(),
-                    date = form.date,
-                    createdAt = now,
-                    note = TRANSFER_FEE_NOTE,
-                    position = feePosition,
-                    amount = fee,
-                    currency = feeCurrency,
-                    fxToCny = feeFx,
-                    amountCny = fee.multiply(feeFx),
-                    categoryId = lossCategory(data, fromInstrument, toInstrument),
-                    linkedTransferId = transferId,
-                )
-            } else {
-                null
-            }
-            listOfNotNull(transfer, lossExpense, feeExpense)
+            listOf(transfer)
         }
 
         "income" -> {
@@ -755,8 +723,6 @@ internal fun buildEvents(
                 error("分红必须选择来源持仓")
             }
             val amount = positive(form.incomeAmount, "金额")
-            val fx = fxFor(form.incomeFx, destinationInstrument.currency, quotes)
-            val amountCny = amount.multiply(fx)
             val incomeId = if (initial is IncomeEvent) initial.id else UUID.randomUUID().toString()
             val externalId = if (form.immediateWithdrawal) UUID.randomUUID().toString() else null
             val income = IncomeEvent(
@@ -769,8 +735,6 @@ internal fun buildEvents(
                 destination = PositionRef(destinationInstitutionId, destinationInstrument.id),
                 amount = amount,
                 currency = destinationInstrument.currency,
-                fxToCny = fx,
-                amountCny = amountCny,
                 immediateExternalWithdrawal = form.immediateWithdrawal,
                 externalAccountLabel = form.externalLabel.takeIf { it.isNotBlank() },
                 linkedEventId = externalId,
@@ -786,8 +750,6 @@ internal fun buildEvents(
                     position = PositionRef(destinationInstitutionId, destinationInstrument.id),
                     amount = amount,
                     currency = destinationInstrument.currency,
-                    fxToCny = fx,
-                    amountCny = amountCny,
                     counterpartyLabel = form.externalLabel.takeIf { it.isNotBlank() },
                 )
             }
@@ -799,7 +761,6 @@ internal fun buildEvents(
             val instrument = requireInstrument(data, form.externalInstrumentId, "现金账户")
             if (instrument.kind != InstrumentKind.CASH) error("外部出入金必须使用现金标的")
             val amount = positive(form.externalAmount, "金额")
-            val fx = fxFor(form.externalFx, instrument.currency, quotes)
             val direction = if (form.externalDirection == "in") ExternalDirection.IN else ExternalDirection.OUT
             val classification = if (direction == ExternalDirection.IN) {
                 ExternalClassification.CAPITAL
@@ -819,8 +780,6 @@ internal fun buildEvents(
                     position = PositionRef(institutionId, instrument.id),
                     amount = amount,
                     currency = instrument.currency,
-                    fxToCny = fx,
-                    amountCny = amount.multiply(fx),
                     counterpartyLabel = null,
                 ),
             )
@@ -841,7 +800,6 @@ internal fun buildEvents(
             } else {
                 data.instrument(position!!.instrumentId)!!.currency
             }
-            val fx = if (form.expenseNoPosition) BigDecimal.ONE else fxFor(form.expenseFx, currency, quotes)
             listOf(
                 ExpenseEvent(
                     id = if (initial is ExpenseEvent) initial.id else UUID.randomUUID().toString(),
@@ -851,8 +809,6 @@ internal fun buildEvents(
                     position = position,
                     amount = amount,
                     currency = currency,
-                    fxToCny = fx,
-                    amountCny = amount.multiply(fx),
                     categoryId = form.expenseCategoryId,
                     linkedTransferId = (initial as? ExpenseEvent)?.linkedTransferId,
                 ),
@@ -871,16 +827,10 @@ internal fun buildEvents(
             if (existingOpening != null) {
                 error("该持仓已于 ${existingOpening.localDate()} 有一笔期初交易")
             }
-            val fx = fxFor(form.openingFx, instrument.currency, quotes)
             val cash = instrument.kind == InstrumentKind.CASH
             val value = nonZero(form.openingValue, if (cash) "期初金额" else "期初份额")
             val quantity = if (cash) null else value
             val amount = if (cash) value else null
-            val valueCny = if (cash) {
-                value.multiply(fx)
-            } else {
-                quotePrice(quotes, instrument)?.let { value.multiply(it).multiply(fx) }
-            }
             listOf(
                 OpeningEvent(
                     id = if (initial is OpeningEvent) initial.id else UUID.randomUUID().toString(),
@@ -891,8 +841,6 @@ internal fun buildEvents(
                     quantity = quantity,
                     amount = amount,
                     price = if (cash) null else quotePrice(quotes, instrument),
-                    fxToCny = fx,
-                    valueCny = valueCny,
                 ),
             )
         }
@@ -901,16 +849,10 @@ internal fun buildEvents(
             val institutionId = form.adjustmentInstitutionId ?: error("请选择机构")
             val instrument = requireInstrument(data, form.adjustmentInstrumentId, "标的")
             if (form.adjustmentReason.isBlank()) error("请填写调整原因")
-            val fx = fxFor(form.adjustmentFx, instrument.currency, quotes)
             val cash = instrument.kind == InstrumentKind.CASH
             val value = nonZero(form.adjustmentValue, if (cash) "金额增减" else "份额增减")
             val deltaQuantity = if (cash) null else value
             val deltaAmount = if (cash) value else null
-            val valueCny = if (cash) {
-                value.multiply(fx)
-            } else {
-                quotePrice(quotes, instrument)?.let { value.multiply(it).multiply(fx) }
-            }
             listOf(
                 AdjustmentEvent(
                     id = if (initial is AdjustmentEvent) initial.id else UUID.randomUUID().toString(),
@@ -921,8 +863,6 @@ internal fun buildEvents(
                     deltaQuantity = deltaQuantity,
                     deltaAmount = deltaAmount,
                     price = if (cash) null else quotePrice(quotes, instrument),
-                    fxToCny = fx,
-                    valueCny = valueCny,
                     reason = form.adjustmentReason,
                 ),
             )
@@ -956,33 +896,15 @@ private fun priceFor(instrument: Instrument, text: String): BigDecimal? =
         null
     }
 
-private fun fxFor(text: String, currency: String, quotes: QuoteSnapshot): BigDecimal {
-    if (currency.uppercase() in setOf("CNY", "CNH")) return BigDecimal.ONE
-    return text.toBigDecimalOrNull()?.takeIf { it.signum() > 0 }
-        ?: quotes.fxRates[currency.uppercase()]
-        ?: error("请输入 $currency → CNY 汇率")
-}
-
-private fun defaultFx(quotes: QuoteSnapshot, currency: String): String =
-    if (currency.uppercase() in setOf("CNY", "CNH")) {
-        "1"
-    } else {
-        quotes.fxRates[currency.uppercase()]?.toPlainString() ?: ""
+internal fun currentFx(currency: String, quotes: QuoteSnapshot): BigDecimal =
+    when (currency.uppercase()) {
+        "CNY", "CNH" -> BigDecimal.ONE
+        else -> quotes.fxRates[currency.uppercase()]
+            ?: error("缺少 $currency 当前汇率，请刷新行情")
     }
 
 private fun quotePrice(quotes: QuoteSnapshot, instrument: Instrument?): BigDecimal? =
     instrument?.let { quotes.quotes[it.id]?.price ?: it.quote.manualPrice }
-
-private fun lossCategory(
-    data: PortfolioData,
-    from: Instrument,
-    to: Instrument,
-): String = when {
-    from.kind == InstrumentKind.CASH && to.kind != InstrumentKind.CASH -> to.categoryId
-    from.kind != InstrumentKind.CASH && to.kind == InstrumentKind.CASH -> from.categoryId
-    from.kind != InstrumentKind.CASH -> from.categoryId
-    else -> CategoryIds.CASH
-}
 
 private val dateDisplayFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
@@ -1009,50 +931,10 @@ private fun Event?.typeKey(): String = when (this) {
     null -> "transfer"
 }
 
-internal fun transferFeeCurrency(from: Instrument?, to: Instrument?): String = when {
-    from?.kind == InstrumentKind.CASH -> from.currency
-    to?.kind == InstrumentKind.CASH -> to.currency
-    else -> "CNY"
-}
-
 internal fun heroQuantityLabel(instrument: Instrument?): String = when {
     instrument == null -> "金额"
     instrument.kind == InstrumentKind.CASH -> instrument.currency
     else -> instrument.unit
-}
-
-internal fun legValueCny(
-    quantityText: String,
-    priceText: String,
-    fxText: String,
-    instrument: Instrument?,
-): BigDecimal? {
-    if (instrument == null) return null
-    val quantity = quantityText.toBigDecimalOrNull() ?: return null
-    val fx = fxText.toBigDecimalOrNull() ?: return null
-    return if (instrument.kind == InstrumentKind.CASH) {
-        quantity.multiply(fx)
-    } else {
-        val price = priceText.toBigDecimalOrNull() ?: return null
-        quantity.multiply(price).multiply(fx)
-    }
-}
-
-internal fun cnyEstimate(
-    quotes: QuoteSnapshot,
-    instrument: Instrument?,
-    quantityText: String,
-    fxText: String,
-): BigDecimal? {
-    if (instrument == null) return null
-    val quantity = quantityText.toBigDecimalOrNull() ?: return null
-    val fx = fxText.toBigDecimalOrNull() ?: return null
-    val price = if (instrument.kind == InstrumentKind.QUOTED) {
-        quotePrice(quotes, instrument) ?: return null
-    } else {
-        BigDecimal.ONE
-    }
-    return quantity.multiply(price).multiply(fx)
 }
 
 internal fun dateTimeLabels(form: EventForm): Pair<String, String> {
@@ -1082,17 +964,14 @@ internal fun swapTransferSides(form: EventForm) {
     val fromInstId = form.fromInstitutionId
     val fromQty = form.fromQuantity
     val fromPx = form.fromPrice
-    val fromRate = form.fromFx
 
     form.fromInstrumentId = form.toInstrumentId
     form.fromInstitutionId = form.toInstitutionId
     form.fromQuantity = form.toQuantity
     form.fromPrice = form.toPrice
-    form.fromFx = form.toFx
 
     form.toInstrumentId = fromInst
     form.toInstitutionId = fromInstId
     form.toQuantity = fromQty
     form.toPrice = fromPx
-    form.toFx = fromRate
 }

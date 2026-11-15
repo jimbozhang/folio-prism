@@ -26,7 +26,6 @@ class OpeningValidationTest {
         openingInstitutionId = INST_A
         openingInstrumentId = CASH_CNY
         openingValue = "50"
-        openingFx = "1"
     }
 
     @Test

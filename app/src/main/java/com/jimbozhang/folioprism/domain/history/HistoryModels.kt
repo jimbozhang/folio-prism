@@ -17,7 +17,6 @@ data class PriceCacheData(
     val schemaVersion: Int = 1,
     val updatedAt: String = "",
     val quotes: Map<String, CachedSeries> = emptyMap(),
-    val fx: Map<String, CachedSeries> = emptyMap(),
 )
 
 data class DailyPortfolioValue(

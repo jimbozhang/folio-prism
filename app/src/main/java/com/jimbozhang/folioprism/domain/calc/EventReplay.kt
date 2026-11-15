@@ -53,6 +53,11 @@ object EventReplay {
             is TransferEvent -> {
                 add(positions, event.from, event.fromQuantity.negate())
                 add(positions, event.to, event.toQuantity)
+                val feePosition = event.feePosition
+                val feeAmount = event.feeAmount
+                if (feePosition != null && feeAmount != null) {
+                    add(positions, feePosition, feeAmount.negate())
+                }
             }
 
             is IncomeEvent -> add(positions, event.destination, event.amount)

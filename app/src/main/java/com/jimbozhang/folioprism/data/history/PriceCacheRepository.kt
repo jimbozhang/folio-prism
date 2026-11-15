@@ -69,25 +69,4 @@ class PriceCacheRepository(
         )
     }
 
-    fun mergeFx(
-        cache: PriceCacheData,
-        currency: String,
-        rates: Map<LocalDate, java.math.BigDecimal>,
-        source: String,
-        fetchedAt: String = OffsetDateTime.now().toString(),
-    ): PriceCacheData {
-        if (rates.isEmpty()) return cache
-        val existing = cache.fx[currency] ?: CachedSeries()
-        val auto = existing.auto.toMutableMap()
-        rates.forEach { (date, value) -> auto[date.toString()] = value.toPlainString() }
-        return cache.copy(
-            fx = cache.fx + (
-                currency to existing.copy(
-                    auto = auto,
-                    lastAutoFetchAt = fetchedAt,
-                    source = source,
-                )
-                ),
-        )
-    }
 }

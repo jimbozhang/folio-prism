@@ -85,12 +85,10 @@ class HistoricalPriceServiceTest {
         assertTrue(result.cache.quotes.containsKey("etf"))
         assertTrue(result.cache.quotes.containsKey(US_EQ))
         assertTrue(result.cache.quotes.containsKey(GOLD))
-        assertTrue(result.cache.fx.containsKey("USD"))
         assertDecimal("1.2", result.cache.quotes[FUND]?.auto?.get("2026-01-01")?.let(::bd))
         assertDecimal("2.1", result.cache.quotes["etf"]?.auto?.get("2026-01-02")?.let(::bd))
         assertDecimal("101", result.cache.quotes[US_EQ]?.auto?.get("2026-01-02")?.let(::bd))
         assertDecimal("901", result.cache.quotes[GOLD]?.auto?.get("2026-01-02")?.let(::bd))
-        assertDecimal("7.0", result.cache.fx["USD"]?.auto?.get("2026-01-02")?.let(::bd))
 
         val requestsAfterFirstFetch = fetcher.requestCount
         val second = service.fetchAndCache(

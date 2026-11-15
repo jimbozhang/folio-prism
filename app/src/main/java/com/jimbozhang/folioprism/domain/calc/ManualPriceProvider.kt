@@ -16,7 +16,7 @@ class ManualPriceProvider(
     override fun price(instrumentId: String, date: LocalDate): BigDecimal? =
         data.instrument(instrumentId)?.quote?.manualPrice
 
-    override fun fxRate(currency: String, date: LocalDate): BigDecimal? =
+    override fun fxRate(currency: String): BigDecimal? =
         when (currency.uppercase()) {
             "CNY", "CNH" -> BigDecimal.ONE
             else -> fxRates[currency.uppercase()]

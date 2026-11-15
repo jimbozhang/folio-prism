@@ -81,12 +81,14 @@ fun opening(
     position: PositionRef,
     quantity: String? = null,
     amount: String? = null,
+    price: String? = null,
     date: String = DATE1,
 ): OpeningEvent = OpeningEvent(
     position = position,
     date = date,
     quantity = quantity?.let(::bd),
     amount = amount?.let(::bd),
+    price = price?.let(::bd),
 )
 
 fun transfer(
@@ -96,8 +98,8 @@ fun transfer(
     toQuantity: String,
     fromPrice: String? = null,
     toPrice: String? = null,
-    fromFx: String = "1",
-    toFx: String = "1",
+    loss: String? = null,
+    lossCurrency: String = "CNY",
     date: String = DATE1,
 ): TransferEvent {
     val values = EventValues.transferValues(
@@ -105,8 +107,6 @@ fun transfer(
         toQuantity = bd(toQuantity),
         fromPrice = fromPrice?.let(::bd),
         toPrice = toPrice?.let(::bd),
-        fromFxToCny = bd(fromFx),
-        toFxToCny = bd(toFx),
     )
     return TransferEvent(
         from = from,
@@ -115,11 +115,8 @@ fun transfer(
         toQuantity = bd(toQuantity),
         fromPrice = fromPrice?.let(::bd),
         toPrice = toPrice?.let(::bd),
-        fromFxToCny = bd(fromFx),
-        toFxToCny = bd(toFx),
-        fromValueCny = values.fromValueCny,
-        toValueCny = values.toValueCny,
-        lossValueCny = values.lossValueCny,
+        lossAmount = loss?.let(::bd) ?: values.fromNative.subtract(values.toNative),
+        lossCurrency = lossCurrency,
         date = date,
     )
 }

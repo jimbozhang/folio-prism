@@ -119,7 +119,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val result = runCatching {
                 val fetched = historicalService.fetchAndCache(data, from, to)
                 val fetchedAt = System.currentTimeMillis()
-                val calculated = HistoryCalculator.build(data, fetched.cache, from, to)
+                val currentFx = (_state.value as? AppUiState.Ready)
+                    ?.quotes?.fxRates
+                    ?: emptyMap()
+                val calculated = HistoryCalculator.build(data, fetched.cache, currentFx, from, to)
                 val calculatedAt = System.currentTimeMillis()
                 android.util.Log.d(
                     "FolioPrismHistory",

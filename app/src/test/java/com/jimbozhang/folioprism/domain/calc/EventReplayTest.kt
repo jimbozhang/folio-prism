@@ -58,6 +58,34 @@ class EventReplayTest {
     }
 
     @Test
+    fun transferFeePositionDeductsCash() {
+        val base = transfer(
+            from = ref(INST_A, CASH_CNY),
+            to = ref(INST_A, FUND),
+            fromQuantity = "100",
+            toQuantity = "10",
+            toPrice = "10",
+        )
+        val withFee = base.copy(
+            lossAmount = bd("2"),
+            feePosition = ref(INST_A, CASH_CNY),
+            feeAmount = bd("2"),
+            feeCurrency = "CNY",
+        )
+        val positions = EventReplay.replay(
+            data(
+                listOf(
+                    opening(ref(INST_A, CASH_CNY), amount = "1000"),
+                    withFee,
+                ),
+            ).events,
+        )
+
+        assertDecimal("898", positions[PositionKey(INST_A, CASH_CNY)])
+        assertDecimal("10", positions[PositionKey(INST_A, FUND)])
+    }
+
+    @Test
     fun sellTransferMovesFundIntoCash() {
         val positions = EventReplay.replay(
             data(
@@ -90,7 +118,6 @@ class EventReplayTest {
                         destination = ref(INST_A, CASH_CNY),
                         amount = bd("50"),
                         currency = "CNY",
-                        amountCny = bd("50"),
                         date = DATE1,
                     ),
                 ),
@@ -110,7 +137,6 @@ class EventReplayTest {
                     ExpenseEvent(
                         amount = bd("10"),
                         currency = "CNY",
-                        amountCny = bd("10"),
                         categoryId = CategoryIds.CASH,
                         position = ref(INST_A, CASH_CNY),
                         date = DATE1,
@@ -131,7 +157,6 @@ class EventReplayTest {
                     ExpenseEvent(
                         amount = bd("10"),
                         currency = "CNY",
-                        amountCny = bd("10"),
                         categoryId = CategoryIds.GROWTH,
                         position = null,
                         date = DATE1,
@@ -155,7 +180,6 @@ class EventReplayTest {
                         position = ref(INST_A, CASH_CNY),
                         amount = bd("20"),
                         currency = "CNY",
-                        amountCny = bd("20"),
                         date = DATE1,
                     ),
                     ExternalEvent(
@@ -164,7 +188,6 @@ class EventReplayTest {
                         position = ref(INST_A, CASH_CNY),
                         amount = bd("30"),
                         currency = "CNY",
-                        amountCny = bd("30"),
                         date = DATE1,
                     ),
                 ),

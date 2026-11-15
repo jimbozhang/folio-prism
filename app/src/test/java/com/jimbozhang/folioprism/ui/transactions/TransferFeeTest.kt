@@ -1,8 +1,8 @@
 package com.jimbozhang.folioprism.ui.transactions
 
 import com.jimbozhang.folioprism.domain.CASH_CNY
-import com.jimbozhang.folioprism.domain.CASH_USD
 import com.jimbozhang.folioprism.domain.FUND
+import com.jimbozhang.folioprism.domain.GROWTH
 import com.jimbozhang.folioprism.domain.INST_A
 import com.jimbozhang.folioprism.domain.assertDecimal
 import com.jimbozhang.folioprism.domain.cashInstrument
@@ -28,89 +28,122 @@ class TransferFeeTest {
         ),
     )
 
-    private fun dataWithUsd() = portfolio(
+    private fun fundData() = portfolio(
         institutions = listOf(Institution(INST_A, "A")),
         instruments = listOf(
-            cashInstrument(CASH_USD, "USD"),
+            cashInstrument(CASH_CNY, "CNY"),
             quotedInstrument(FUND, CategoryIds.GROWTH),
+            quotedInstrument(GROWTH, CategoryIds.DIVIDEND),
         ),
     )
 
-    private fun formWithFee(fee: String): EventForm = EventForm(null, data()).apply {
-        type = "transfer"
-        date = "2026-01-01 10:00"
-        fromInstitutionId = INST_A
-        fromInstrumentId = FUND
-        fromQuantity = "10"
-        fromPrice = "2"
-        fromFx = "1"
-        toInstitutionId = INST_A
-        toInstrumentId = CASH_CNY
-        toQuantity = "20"
-        toFx = "1"
-        transferFee = fee
-    }
-
-    @Test
-    fun feeCreatesLinkedExpense() {
-        val form = formWithFee("1.50")
-        val events = buildEvents(data(), QuoteSnapshot(), form, null).getOrThrow()
-
-        assertEquals(2, events.size)
-        val transfer = events.filterIsInstance<TransferEvent>().single()
-        val fee = events.filterIsInstance<ExpenseEvent>().single()
-        assertEquals("转账手续费", fee.note)
-        assertDecimal("1.50", fee.amount)
-        assertDecimal("1.50", fee.amountCny)
-        assertEquals("CNY", fee.currency)
-        assertEquals(PositionRef(INST_A, CASH_CNY), fee.position)
-        assertEquals(CategoryIds.GROWTH, fee.categoryId)
-        assertEquals(transfer.id, fee.linkedTransferId)
-    }
-
-    @Test
-    fun zeroFeeCreatesNoExpense() {
-        val form = formWithFee("0")
-        val events = buildEvents(data(), QuoteSnapshot(), form, null).getOrThrow()
-
-        assertEquals(1, events.size)
-        assertTrue(events.single() is TransferEvent)
-    }
-
-    @Test
-    fun foreignCashFeeUsesCashCurrencyAndRate() {
-        val form = EventForm(null, dataWithUsd()).apply {
+    private fun cashToFundForm(feeLoss: String = "1.50"): EventForm =
+        EventForm(null, data()).apply {
             type = "transfer"
             date = "2026-01-01 10:00"
             fromInstitutionId = INST_A
-            fromInstrumentId = CASH_USD
-            fromQuantity = "10"
-            fromFx = "7"
+            fromInstrumentId = CASH_CNY
+            fromQuantity = "20"
             toInstitutionId = INST_A
             toInstrumentId = FUND
-            toQuantity = "35"
+            toQuantity = "9.25"
             toPrice = "2"
-            toFx = "1"
-            transferFee = "1.50"
+            this.feeLoss = feeLoss
         }
-        val events = buildEvents(dataWithUsd(), QuoteSnapshot(), form, null).getOrThrow()
 
-        assertEquals(2, events.size)
-        val fee = events.filterIsInstance<ExpenseEvent>().single()
-        assertEquals("USD", fee.currency)
-        assertDecimal("1.50", fee.amount)
-        assertDecimal("10.50", fee.amountCny)
-        assertEquals(PositionRef(INST_A, CASH_USD), fee.position)
-        assertEquals(CategoryIds.GROWTH, fee.categoryId)
+    private fun fundConversionForm(feeLoss: String = "1.50"): EventForm =
+        EventForm(null, fundData()).apply {
+            type = "transfer"
+            date = "2026-01-01 10:00"
+            fromInstitutionId = INST_A
+            fromInstrumentId = FUND
+            fromQuantity = "10"
+            fromPrice = "2"
+            toInstitutionId = INST_A
+            toInstrumentId = GROWTH
+            toQuantity = "18.5"
+            toPrice = "1"
+            this.feeLoss = feeLoss
+        }
+
+    @Test
+    fun cashToFundFeeIsStoredOnTransferOnly() {
+        val events = buildEvents(data(), QuoteSnapshot(), cashToFundForm(), null).getOrThrow()
+
+        assertEquals(1, events.size)
+        val transfer = events.single() as TransferEvent
+        assertDecimal("1.50", transfer.lossAmount)
+        assertTrue(events.none { it is ExpenseEvent })
+        assertEquals(null, transfer.feePosition)
+        assertEquals(null, transfer.feeAmount)
     }
 
     @Test
-    fun editingTransferLoadsLinkedFee() {
-        val form = formWithFee("1.50")
-        val events = buildEvents(data(), QuoteSnapshot(), form, null).getOrThrow()
-        val transfer = events.filterIsInstance<TransferEvent>().single()
+    fun fundConversionFeeIsStoredOnTransferOnly() {
+        val events = buildEvents(fundData(), QuoteSnapshot(), fundConversionForm(), null).getOrThrow()
+
+        assertEquals(1, events.size)
+        val transfer = events.single() as TransferEvent
+        assertDecimal("1.50", transfer.lossAmount)
+        assertTrue(events.none { it is ExpenseEvent })
+        assertEquals(null, transfer.feePosition)
+    }
+
+    @Test
+    fun thirdPartyCashFeeRecordsCashPositionAndNativeAmount() {
+        val form = fundConversionForm("2.50").apply {
+            fromQuantity = "10"
+            fromPrice = "2"
+            toQuantity = "10"
+            toPrice = "2"
+            feeFromCash = true
+            feeInstitutionId = INST_A
+            feeInstrumentId = CASH_CNY
+        }
+        val events = buildEvents(fundData(), QuoteSnapshot(), form, null).getOrThrow()
+
+        assertEquals(1, events.size)
+        val transfer = events.single() as TransferEvent
+        assertDecimal("0", transfer.lossAmount)
+        assertEquals(PositionRef(INST_A, CASH_CNY), transfer.feePosition)
+        assertDecimal("2.50", transfer.feeAmount)
+        assertEquals("CNY", transfer.feeCurrency)
+        assertTrue(events.none { it is ExpenseEvent })
+    }
+
+    @Test
+    fun negativeFeeLossIsAllowed() {
+        val form = fundConversionForm("-1.00").apply {
+            toQuantity = "10"
+            toPrice = "2.1"
+        }
+        val events = buildEvents(fundData(), QuoteSnapshot(), form, null).getOrThrow()
+
+        val transfer = events.single() as TransferEvent
+        assertDecimal("-1.00", transfer.lossAmount)
+    }
+
+    @Test
+    fun editingTransferLoadsFeeLoss() {
+        val events = buildEvents(data(), QuoteSnapshot(), cashToFundForm(), null).getOrThrow()
+        val transfer = events.single() as TransferEvent
         val loaded = EventForm(transfer, data().copy(events = events))
 
-        assertEquals("1.50", loaded.transferFee)
+        assertEquals("1.50", loaded.feeLoss)
+    }
+
+    @Test
+    fun noFeeHasNoExpense() {
+        val form = cashToFundForm("").apply {
+            fromQuantity = "20"
+            toQuantity = "10"
+            toPrice = "2"
+        }
+        val events = buildEvents(data(), QuoteSnapshot(), form, null).getOrThrow()
+
+        assertEquals(1, events.size)
+        val transfer = events.single() as TransferEvent
+        assertDecimal("0", transfer.lossAmount)
+        assertTrue(events.none { it is ExpenseEvent })
     }
 }

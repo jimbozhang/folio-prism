@@ -62,7 +62,7 @@ import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import com.jimbozhang.folioprism.ui.components.FilterDropdown
-import com.jimbozhang.folioprism.ui.components.formatCny
+import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.ui.components.formatNative
 import com.jimbozhang.folioprism.ui.components.formatQuantity
 import com.jimbozhang.folioprism.ui.theme.FolioBlue
@@ -435,7 +435,17 @@ private fun eventSubtitle(
 }
 
 private fun eventAmount(data: PortfolioData, event: Event): String = when (event) {
-    is TransferEvent -> formatCny(event.toValueCny)
+    is TransferEvent -> {
+        val instrument = data.instrument(event.to.instrumentId)
+        when {
+            instrument == null -> "--"
+            instrument.kind == InstrumentKind.CASH ->
+                formatNative(event.toQuantity, instrument.currency)
+            event.toPrice != null ->
+                formatNative(event.toQuantity.multiply(event.toPrice), instrument.currency)
+            else -> formatQuantity(event.toQuantity) + " " + instrument.unit
+        }
+    }
 
     is IncomeEvent -> "+" + formatNative(event.amount, event.currency)
 
@@ -475,34 +485,23 @@ private fun eventSecondaryAmount(
     event: Event,
 ): Pair<String, Color>? = when (event) {
     is TransferEvent -> {
-        if (event.lossValueCny.signum() != 0) {
-            val color = if (event.lossValueCny.signum() > 0) FolioGreen else FolioCoral
-            "损耗 ${signedCny(event.lossValueCny)}" to color
-        } else {
+        val parts = buildList {
+            if (event.lossAmount.signum() != 0) {
+                add(signedNative(event.lossAmount, event.lossCurrency))
+            }
+            val feeAmount = event.feeAmount
+            val feeCurrency = event.feeCurrency
+            if (feeAmount != null && feeAmount.signum() != 0 && feeCurrency != null) {
+                add(signedNative(feeAmount, feeCurrency))
+            }
+        }
+        if (parts.isEmpty()) {
             null
+        } else {
+            val color = if (event.lossAmount.signum() >= 0) FolioGreen else FolioCoral
+            "手续费/损耗 ${parts.joinToString(" + ")}" to color
         }
     }
-
-    is IncomeEvent ->
-        if (event.currency.uppercase() in setOf("CNY", "CNH")) {
-            null
-        } else {
-            "≈ ${formatCny(event.amountCny)}" to FolioMuted
-        }
-
-    is ExternalEvent ->
-        if (event.currency.uppercase() in setOf("CNY", "CNH")) {
-            null
-        } else {
-            "≈ ${formatCny(event.amountCny)}" to FolioMuted
-        }
-
-    is ExpenseEvent ->
-        if (event.currency.uppercase() in setOf("CNY", "CNH")) {
-            null
-        } else {
-            "≈ ${formatCny(event.amountCny)}" to FolioMuted
-        }
 
     else -> null
 }
@@ -526,9 +525,6 @@ private fun shortPosition(data: PortfolioData, ref: PositionRef): String {
     val code = instrument?.code ?: ref.instrumentId
     return "$institution $code"
 }
-
-private fun signedCny(value: BigDecimal): String =
-    if (value.signum() < 0) "-" + formatCny(value.abs()) else formatCny(value)
 
 private fun signedNative(value: BigDecimal, currency: String): String =
     (if (value.signum() < 0) "-" else "+") + formatNative(value.abs(), currency)

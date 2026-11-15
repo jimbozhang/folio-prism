@@ -5,6 +5,7 @@ import com.jimbozhang.folioprism.domain.CASH_CNY
 import com.jimbozhang.folioprism.domain.DATE1
 import com.jimbozhang.folioprism.domain.FUND
 import com.jimbozhang.folioprism.domain.INST_A
+import com.jimbozhang.folioprism.domain.assertDecimal
 import com.jimbozhang.folioprism.domain.cashInstrument
 import com.jimbozhang.folioprism.domain.opening
 import com.jimbozhang.folioprism.domain.portfolio
@@ -25,6 +26,7 @@ import com.jimbozhang.folioprism.domain.money.bd
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -46,13 +48,11 @@ class JsonTest {
             destination = ref(INST_A, CASH_CNY),
             amount = bd("50"),
             currency = "CNY",
-            amountCny = bd("50"),
             date = DATE1,
         ),
         ExpenseEvent(
             amount = bd("10"),
             currency = "CNY",
-            amountCny = bd("10"),
             categoryId = CategoryIds.CASH,
             position = ref(INST_A, CASH_CNY),
             date = DATE1,
@@ -63,7 +63,6 @@ class JsonTest {
             position = ref(INST_A, CASH_CNY),
             amount = bd("500"),
             currency = "CNY",
-            amountCny = bd("500"),
             date = DATE1,
         ),
         AdjustmentEvent(
@@ -95,6 +94,11 @@ class JsonTest {
         assertTrue(encoded.contains("\"type\": \"transfer\""))
         assertTrue(encoded.contains("\"fromQuantity\": \"1000\""))
         assertTrue(encoded.contains("\"targetPct\": \"32\""))
+        assertFalse(encoded.contains("\"fxToCny\""))
+        assertFalse(encoded.contains("\"fromFxToCny\""))
+        assertFalse(encoded.contains("\"amountCny\""))
+        assertFalse(encoded.contains("\"fromValueCny\""))
+        assertFalse(encoded.contains("\"lossValueCny\""))
     }
 
     @Test
@@ -110,6 +114,36 @@ class JsonTest {
         assertTrue(file.exists())
         assertTrue(file.readText().contains("\"schemaVersion\": 1"))
         dir.deleteRecursively()
+    }
+
+    @Test
+    fun transferFeeFieldsRoundTrip() {
+        val withFee = transfer(
+            from = ref(INST_A, CASH_CNY),
+            to = ref(INST_A, FUND),
+            fromQuantity = "100",
+            toQuantity = "99",
+            toPrice = "1",
+        ).copy(
+            lossAmount = bd("1"),
+            feePosition = ref(INST_A, CASH_CNY),
+            feeAmount = bd("1"),
+            feeCurrency = "CNY",
+        )
+        val data = portfolio(
+            instruments = listOf(
+                cashInstrument(CASH_CNY, "CNY"),
+                quotedInstrument(FUND, CategoryIds.GROWTH),
+            ),
+            events = listOf(withFee),
+        )
+        val decoded = PortfolioJson.decode(PortfolioJson.encode(data))
+        val out = decoded.events.single() as TransferEvent
+
+        assertDecimal("1", out.lossAmount)
+        assertEquals(ref(INST_A, CASH_CNY), out.feePosition)
+        assertDecimal("1", out.feeAmount)
+        assertEquals("CNY", out.feeCurrency)
     }
 
     @Test

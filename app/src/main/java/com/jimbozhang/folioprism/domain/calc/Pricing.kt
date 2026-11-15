@@ -10,7 +10,9 @@ import java.time.LocalDate
 
 interface PriceProvider {
     fun price(instrumentId: String, date: LocalDate): BigDecimal?
-    fun fxRate(currency: String, date: LocalDate): BigDecimal?
+
+    /** Current FX rate only. Historical FX is intentionally not supported. */
+    fun fxRate(currency: String): BigDecimal?
 }
 
 /**
@@ -24,7 +26,7 @@ class MapPriceProvider(
     override fun price(instrumentId: String, date: LocalDate): BigDecimal? =
         prices[instrumentId]
 
-    override fun fxRate(currency: String, date: LocalDate): BigDecimal? =
+    override fun fxRate(currency: String): BigDecimal? =
         when (currency.uppercase()) {
             "CNY", "CNH" -> BigDecimal.ONE
             else -> fxRates[currency.uppercase()]
@@ -39,11 +41,10 @@ object Valuation {
     fun fxToCny(
         currency: String,
         provider: PriceProvider,
-        date: LocalDate,
     ): BigDecimal? =
         when (currency.uppercase()) {
             "CNY", "CNH" -> BigDecimal.ONE
-            else -> provider.fxRate(currency.uppercase(), date)
+            else -> provider.fxRate(currency.uppercase())
         }
 
     /**
@@ -57,7 +58,7 @@ object Valuation {
         date: LocalDate,
     ): BigDecimal? {
         val instrument = data.instrument(key.instrumentId) ?: return null
-        val fx = fxToCny(instrument.currency, provider, date) ?: return null
+        val fx = fxToCny(instrument.currency, provider) ?: return null
 
         return when (instrument.kind) {
             InstrumentKind.CASH -> quantity.multiply(fx)

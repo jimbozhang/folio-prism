@@ -1,6 +1,7 @@
 package com.jimbozhang.folioprism.domain.history
 
 import com.jimbozhang.folioprism.domain.CASH_CNY
+import com.jimbozhang.folioprism.domain.CASH_USD
 import com.jimbozhang.folioprism.domain.FUND
 import com.jimbozhang.folioprism.domain.INST_A
 import com.jimbozhang.folioprism.domain.assertDecimal
@@ -17,6 +18,8 @@ import com.jimbozhang.folioprism.domain.model.ExternalClassification
 import com.jimbozhang.folioprism.domain.model.ExternalDirection
 import com.jimbozhang.folioprism.domain.model.ExternalEvent
 import com.jimbozhang.folioprism.domain.model.PortfolioData
+import com.jimbozhang.folioprism.domain.model.QuoteConfig
+import com.jimbozhang.folioprism.domain.model.QuoteMode
 import com.jimbozhang.folioprism.domain.money.bd
 import com.jimbozhang.folioprism.domain.calc.HistoryCalculator
 import java.time.LocalDate
@@ -56,7 +59,7 @@ class HistoryCalculatorTest {
 
     @Test
     fun curveUsesNearestPreviousPrice() {
-        val result = HistoryCalculator.build(data(baseEvents()), cache(), from, to)
+        val result = HistoryCalculator.build(data(baseEvents()), cache(), emptyMap(), from, to)
 
         assertDecimal("1100", result.curve.first().totalCny)
         assertDecimal("1120", result.curve.last().totalCny)
@@ -64,7 +67,7 @@ class HistoryCalculatorTest {
 
     @Test
     fun categoryPnlReflectsMarketGain() {
-        val result = HistoryCalculator.build(data(baseEvents()), cache(), from, to)
+        val result = HistoryCalculator.build(data(baseEvents()), cache(), emptyMap(), from, to)
         val growth = result.categoryPnl.first { it.categoryId == CategoryIds.GROWTH }
         val cash = result.categoryPnl.first { it.categoryId == CategoryIds.CASH }
 
@@ -82,7 +85,7 @@ class HistoryCalculatorTest {
             toPrice = "10",
             date = "2026-01-10T00:00:00+08:00",
         )
-        val result = HistoryCalculator.build(data(events), cache(), from, to)
+        val result = HistoryCalculator.build(data(events), cache(), emptyMap(), from, to)
         val growth = result.categoryPnl.first { it.categoryId == CategoryIds.GROWTH }
         val cash = result.categoryPnl.first { it.categoryId == CategoryIds.CASH }
 
@@ -98,10 +101,9 @@ class HistoryCalculatorTest {
             position = ref(INST_A, CASH_CNY),
             amount = bd("500"),
             currency = "CNY",
-            amountCny = bd("500"),
             date = "2026-01-10T00:00:00+08:00",
         )
-        val result = HistoryCalculator.build(data(events), cache(), from, to)
+        val result = HistoryCalculator.build(data(events), cache(), emptyMap(), from, to)
         val cash = result.categoryPnl.first { it.categoryId == CategoryIds.CASH }
 
         assertDecimal("0", cash.pnlCny)
@@ -113,19 +115,18 @@ class HistoryCalculatorTest {
         val events = baseEvents() + ExpenseEvent(
             amount = bd("10"),
             currency = "CNY",
-            amountCny = bd("10"),
             categoryId = CategoryIds.CASH,
             position = ref(INST_A, CASH_CNY),
             date = "2026-01-10T00:00:00+08:00",
         )
-        val result = HistoryCalculator.build(data(events), cache(), from, to)
+        val result = HistoryCalculator.build(data(events), cache(), emptyMap(), from, to)
         val cash = result.categoryPnl.first { it.categoryId == CategoryIds.CASH }
 
         assertDecimal("-10", cash.pnlCny)
     }
 
     @Test
-    fun transferLossIsDeductedFromCategory() {
+    fun transferEmbeddedLossIsDeductedFromCategory() {
         val buyTransfer = transfer(
             from = ref(INST_A, CASH_CNY),
             to = ref(INST_A, FUND),
@@ -133,20 +134,83 @@ class HistoryCalculatorTest {
             toQuantity = "9",
             toPrice = "10",
             date = "2026-01-10T00:00:00+08:00",
-        )
-        val events = baseEvents() + buyTransfer + ExpenseEvent(
-            amount = bd("10"),
-            currency = "CNY",
-            amountCny = bd("10"),
-            categoryId = CategoryIds.GROWTH,
-            position = null,
-            linkedTransferId = buyTransfer.id,
-            date = "2026-01-10T00:00:00+08:00",
-        )
-        val result = HistoryCalculator.build(data(events), cache(), from, to)
+        ).copy(lossAmount = bd("10"))
+        val events = baseEvents() + buyTransfer
+        val result = HistoryCalculator.build(data(events), cache(), emptyMap(), from, to)
         val growth = result.categoryPnl.first { it.categoryId == CategoryIds.GROWTH }
 
         assertDecimal("28", growth.pnlCny)
+    }
+
+    @Test
+    fun foreignCashUsesCurrentFxForEveryDate() {
+        val data = portfolio(
+            instruments = listOf(cashInstrument(CASH_USD, "USD")),
+            events = listOf(
+                opening(
+                    ref(INST_A, CASH_USD),
+                    amount = "100",
+                    date = "2026-01-01T00:00:00+08:00",
+                ),
+            ),
+        )
+        val result = HistoryCalculator.build(
+            data,
+            PriceCacheData(),
+            mapOf("USD" to bd("7")),
+            from,
+            to,
+        )
+
+        assertDecimal("700", result.curve.first().totalCny)
+        assertDecimal("700", result.curve.last().totalCny)
+    }
+
+    @Test
+    fun missingCurrentFxMarksIncomplete() {
+        val data = portfolio(
+            instruments = listOf(cashInstrument(CASH_USD, "USD")),
+            events = listOf(opening(ref(INST_A, CASH_USD), amount = "100")),
+        )
+        val result = HistoryCalculator.build(data, PriceCacheData(), emptyMap(), from, to)
+
+        assertTrue(result.curve.last().incomplete)
+        assertNull(result.curve.last().totalCny)
+    }
+
+    @Test
+    fun manualPriceInterpolatesBetweenKnownPoints() {
+        val manualFund = quotedInstrument(FUND, CategoryIds.GROWTH, code = "008163")
+            .copy(
+                quote = QuoteConfig(
+                    mode = QuoteMode.MANUAL,
+                    source = "manual",
+                    manualPrice = bd("120"),
+                ),
+            )
+        val data = portfolio(
+            instruments = listOf(manualFund),
+            events = listOf(
+                opening(
+                    ref(INST_A, FUND),
+                    quantity = "1",
+                    price = "100",
+                    date = "2026-01-01T00:00:00+08:00",
+                ),
+            ),
+        )
+        val end = LocalDate.of(2026, 1, 11)
+        val result = HistoryCalculator.build(
+            data,
+            PriceCacheData(),
+            emptyMap(),
+            LocalDate.of(2026, 1, 1),
+            end,
+        )
+
+        assertDecimal("100", result.curve.first().totalCny)
+        assertDecimal("110", result.curve[5].totalCny)
+        assertDecimal("120", result.curve.last().totalCny)
     }
 
     @Test
@@ -154,6 +218,7 @@ class HistoryCalculatorTest {
         val result = HistoryCalculator.build(
             data(baseEvents()),
             cache(includeEnd = false),
+            emptyMap(),
             from,
             LocalDate.of(2026, 3, 31),
         )

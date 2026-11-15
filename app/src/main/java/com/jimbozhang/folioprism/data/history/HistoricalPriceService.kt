@@ -11,7 +11,6 @@ import com.jimbozhang.folioprism.domain.model.QuoteMode
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.model.positionRefs
 import java.math.BigDecimal
-import java.math.RoundingMode
 import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -104,39 +103,6 @@ class HistoricalPriceService(
             }.onFailure {
                 logs += "history failed: ${instrument.code}: ${it.message}"
             }
-        }
-
-        val currencies = instruments
-            .map { it.currency.uppercase() }
-            .filter { it !in setOf("CNY", "CNH") }
-            .toSet()
-        val missingCurrencies = currencies.filterNot {
-            isCovered(cache.fx[it], from, to)
-        }
-        currencies.filterNot { it in missingCurrencies }.forEach {
-            logs += "fx cached: $it"
-        }
-        if (missingCurrencies.isNotEmpty()) {
-            runCatching { fetchFx(fetchFrom, to) }
-                .onSuccess { fx ->
-                    missingCurrencies.forEach { currency ->
-                        val series = fx[currency]
-                        if (series.isNullOrEmpty()) {
-                            logs += "fx history missing: $currency"
-                        } else {
-                            cache = cacheRepository.mergeFx(
-                                cache = cache,
-                                currency = currency,
-                                rates = series,
-                                source = "frankfurter",
-                                fetchedAt = now(),
-                            )
-                            cacheChanged = true
-                            logs += "fx history ok: $currency"
-                        }
-                    }
-                }
-                .onFailure { logs += "fx history failed: ${it.message}" }
         }
 
         if (cacheChanged) {
@@ -273,30 +239,6 @@ class HistoricalPriceService(
         val prices = parseSinaSeries(getWithRetry(url), from, to)
         if (prices.isEmpty()) error("no Sina AU0 history in range")
         return HistoricalSeries(prices, "sina AU0 futures (proxy for AU9999)")
-    }
-
-    private suspend fun fetchFx(
-        from: LocalDate,
-        to: LocalDate,
-    ): Map<String, Map<LocalDate, BigDecimal>> {
-        val url = "https://api.frankfurter.app/$from..$to?from=USD&to=CNY,HKD"
-        val root = parseObject(getWithRetry(url))
-        val rates = root.obj("rates") ?: error("rates missing")
-        val usd = linkedMapOf<LocalDate, BigDecimal>()
-        val hkd = linkedMapOf<LocalDate, BigDecimal>()
-        rates.forEach { (dateText, element) ->
-            val date = runCatching { LocalDate.parse(dateText) }.getOrNull()
-                ?: return@forEach
-            if (date.isBefore(from) || date.isAfter(to)) return@forEach
-            val obj = element as? JsonObject ?: return@forEach
-            val cny = obj.decimal("CNY") ?: return@forEach
-            usd[date] = cny
-            val hkdRate = obj.decimal("HKD")
-            if (hkdRate != null && hkdRate.signum() > 0) {
-                hkd[date] = cny.divide(hkdRate, 8, RoundingMode.HALF_UP)
-            }
-        }
-        return mapOf("USD" to usd, "HKD" to hkd)
     }
 
     private fun parseSinaSeries(

@@ -11,7 +11,7 @@ class LivePriceProvider(
     override fun price(instrumentId: String, date: LocalDate): BigDecimal? =
         quotes.quotes[instrumentId]?.price
 
-    override fun fxRate(currency: String, date: LocalDate): BigDecimal? =
+    override fun fxRate(currency: String): BigDecimal? =
         when (currency.uppercase()) {
             "CNY", "CNH" -> BigDecimal.ONE
             else -> quotes.fxRates[currency.uppercase()]

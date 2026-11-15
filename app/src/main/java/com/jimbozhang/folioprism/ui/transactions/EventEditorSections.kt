@@ -19,7 +19,6 @@ import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Category
-import androidx.compose.material.icons.outlined.CurrencyExchange
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.SwapHoriz
@@ -48,7 +47,6 @@ import com.jimbozhang.folioprism.ui.components.InlineNumberField
 import com.jimbozhang.folioprism.ui.components.InlineTextField
 import com.jimbozhang.folioprism.ui.components.PositionValue
 import com.jimbozhang.folioprism.ui.components.ToggleRow
-import com.jimbozhang.folioprism.ui.components.formatCny
 import com.jimbozhang.folioprism.ui.components.formatNative
 import com.jimbozhang.folioprism.ui.theme.FolioBlue
 import com.jimbozhang.folioprism.ui.theme.FolioCoral
@@ -68,8 +66,9 @@ internal fun TransferSection(
 ) {
     val fromInstrument = form.fromInstrumentId?.let { data.instrument(it) }
     val toInstrument = form.toInstrumentId?.let { data.instrument(it) }
-    val fromValue = legValueCny(form.fromQuantity, form.fromPrice, form.fromFx, fromInstrument)
-    val toValue = legValueCny(form.toQuantity, form.toPrice, form.toFx, toInstrument)
+    val fromValue = nativeLegValue(form.fromQuantity, form.fromPrice, fromInstrument)
+    val toValue = nativeLegValue(form.toQuantity, form.toPrice, toInstrument)
+    val lossCurrency = fromInstrument?.currency ?: "CNY"
 
     AmountHero(
         label = "转出",
@@ -78,7 +77,7 @@ internal fun TransferSection(
         onValueChange = { form.fromQuantity = it },
         secondary = when {
             fromInstrument == null -> "未选择账户"
-            fromValue != null -> "≈ ${formatCny(fromValue)}"
+            fromValue != null -> formatNative(fromValue, fromInstrument.currency)
             else -> null
         },
     )
@@ -89,20 +88,27 @@ internal fun TransferSection(
         onValueChange = { form.toQuantity = it },
         secondary = when {
             toInstrument == null -> "未选择账户"
-            toValue != null -> "≈ ${formatCny(toValue)}"
+            toValue != null -> formatNative(toValue, toInstrument.currency)
             else -> null
         },
     )
     if (fromValue != null && toValue != null) {
-        val fee = form.transferFee.toBigDecimalOrNull() ?: BigDecimal.ZERO
-        val feeSuffix = if (fee.signum() > 0) {
-            " · 手续费 " + formatNative(fee, transferFeeCurrency(fromInstrument, toInstrument))
+        val embedded = if (fromInstrument?.currency.equals(toInstrument?.currency, true)) {
+            fromValue.subtract(toValue)
+        } else {
+            BigDecimal.ZERO
+        }
+        val feeLoss = form.feeLoss.toBigDecimalOrNull() ?: embedded
+        val cashFee = if (form.feeFromCash) feeLoss.subtract(embedded) else null
+        val cashSuffix = if (cashFee != null) {
+            " · 现金账户扣 ${formatNative(cashFee, lossCurrency)}"
         } else {
             ""
         }
         Text(
-            text = "转出价值 ${formatCny(fromValue)} · 转入价值 ${formatCny(toValue)}" +
-                " · 损耗 ${formatCny(fromValue.subtract(toValue))}" + feeSuffix,
+            text = "转出价值 ${formatNative(fromValue, fromInstrument!!.currency)}" +
+                " · 转入价值 ${formatNative(toValue, toInstrument!!.currency)}" +
+                " · 手续费/损耗 ${formatNative(feeLoss, lossCurrency)}" + cashSuffix,
             style = MaterialTheme.typography.bodySmall,
             color = FolioMuted,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
@@ -111,7 +117,7 @@ internal fun TransferSection(
     FormDivider()
     TransferAccountsRow(data, form, onPick)
     FormDivider()
-    PriceFxSection(form, fromInstrument, toInstrument)
+    PriceSection(data, form, fromInstrument, toInstrument, onPick)
 }
 
 @Composable
@@ -219,14 +225,17 @@ private fun SwapButton(onClick: () -> Unit) {
 }
 
 @Composable
-private fun PriceFxSection(
+private fun PriceSection(
+    data: PortfolioData,
     form: EventForm,
     fromInstrument: Instrument?,
     toInstrument: Instrument?,
+    onPick: (PickerTarget) -> Unit,
 ) {
+    val lossCurrency = fromInstrument?.currency ?: "CNY"
     Column {
         Text(
-            text = "价格与汇率",
+            text = "价格",
             style = MaterialTheme.typography.labelMedium,
             color = FolioMuted,
             modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 2.dp),
@@ -239,33 +248,57 @@ private fun PriceFxSection(
             FormDivider()
             PriceRow("转入单价", form.toPrice, { form.toPrice = it }, toInstrument.currency)
         }
-        if (needsFx(fromInstrument)) {
-            FormDivider()
-            FxRow("转出汇率", fromInstrument!!.currency, form.fromFx) { form.fromFx = it }
-        }
-        if (needsFx(toInstrument)) {
-            FormDivider()
-            FxRow("转入汇率", toInstrument!!.currency, form.toFx) { form.toFx = it }
-        }
         FormDivider()
-        val feeCurrency = transferFeeCurrency(fromInstrument, toInstrument)
         FormRow(
             icon = Icons.AutoMirrored.Outlined.ReceiptLong,
             iconTint = FolioGreen,
-            label = "手续费",
+            label = "手续费/损耗",
+            labelWidth = 88.dp,
         ) {
             Text(
-                text = feeCurrency,
+                text = lossCurrency,
                 style = MaterialTheme.typography.bodySmall,
                 color = FolioMuted,
                 modifier = Modifier.weight(1f),
             )
             InlineNumberField(
-                value = form.transferFee,
-                onValueChange = { form.transferFee = it },
+                value = form.feeLoss,
+                onValueChange = { form.feeLoss = it },
                 modifier = Modifier.width(120.dp),
-                placeholder = "0",
+                placeholder = "自动",
+                allowNegative = true,
             )
+        }
+        FormDivider()
+        ToggleRow(
+            icon = Icons.Outlined.AccountBalanceWallet,
+            iconTint = FolioGold,
+            text = "从现金账户扣",
+            checked = form.feeFromCash,
+            onCheckedChange = { checked ->
+                form.feeFromCash = checked
+                if (!checked) {
+                    form.feeInstitutionId = null
+                    form.feeInstrumentId = null
+                }
+            },
+        )
+        if (form.feeFromCash) {
+            FormDivider()
+            FormRow(
+                icon = Icons.Outlined.AccountBalanceWallet,
+                iconTint = FolioGold,
+                label = "手续费账户",
+            ) {
+                TransferAccountColumn(
+                    data = data,
+                    institutionId = form.feeInstitutionId,
+                    instrumentId = form.feeInstrumentId,
+                    label = "现金账户",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPick(PickerTarget.FEE_CASH) },
+                )
+            }
         }
     }
 }
@@ -279,24 +312,13 @@ internal fun IncomeSection(
 ) {
     val destination = form.incomeInstrumentId?.let { data.instrument(it) }
     val category = destination?.currency ?: "CNY"
-    val amount = form.incomeAmount.toBigDecimalOrNull()
-    val fx = form.incomeFx.toBigDecimalOrNull()
-    val converted = if (needsFx(destination) && amount != null && fx != null) {
-        amount.multiply(fx)
-    } else {
-        null
-    }
 
     AmountHero(
         label = if (form.incomeKind == "dividend") "分红金额" else "利息金额",
         unit = category,
         value = form.incomeAmount,
         onValueChange = { form.incomeAmount = it },
-        secondary = when {
-            destination == null -> "未选择账户"
-            converted != null -> "≈ ${formatCny(converted)}"
-            else -> null
-        },
+        secondary = if (destination == null) "未选择账户" else null,
     )
     FormDivider()
     FormRow(
@@ -346,10 +368,6 @@ internal fun IncomeSection(
     ) {
         PositionValue(data, form.incomeInstitutionId, form.incomeInstrumentId)
     }
-    if (needsFx(destination)) {
-        FormDivider()
-        FxRow("汇率", destination!!.currency, form.incomeFx) { form.incomeFx = it }
-    }
     FormDivider()
     ToggleRow(
         icon = Icons.Outlined.SwapHoriz,
@@ -383,13 +401,6 @@ internal fun ExternalSection(
 ) {
     val instrument = form.externalInstrumentId?.let { data.instrument(it) }
     val currency = instrument?.currency ?: "CNY"
-    val amount = form.externalAmount.toBigDecimalOrNull()
-    val fx = form.externalFx.toBigDecimalOrNull()
-    val converted = if (needsFx(instrument) && amount != null && fx != null) {
-        amount.multiply(fx)
-    } else {
-        null
-    }
     val isIn = form.externalDirection == "in"
 
     AmountHero(
@@ -397,11 +408,7 @@ internal fun ExternalSection(
         unit = currency,
         value = form.externalAmount,
         onValueChange = { form.externalAmount = it },
-        secondary = when {
-            instrument == null -> "未选择账户"
-            converted != null -> "≈ ${formatCny(converted)}"
-            else -> null
-        },
+        secondary = if (instrument == null) "未选择账户" else null,
     )
     FormDivider()
     FormRow(
@@ -438,10 +445,6 @@ internal fun ExternalSection(
         showChevron = true,
     ) {
         PositionValue(data, form.externalInstitutionId, form.externalInstrumentId)
-    }
-    if (needsFx(instrument)) {
-        FormDivider()
-        FxRow("汇率", instrument!!.currency, form.externalFx) { form.externalFx = it }
     }
 }
 
@@ -500,10 +503,6 @@ internal fun ExpenseSection(
         ) {
             PositionValue(data, form.expenseInstitutionId, form.expenseInstrumentId)
         }
-        if (needsFx(cash)) {
-            FormDivider()
-            FxRow("汇率", cash!!.currency, form.expenseFx) { form.expenseFx = it }
-        }
     }
 }
 
@@ -517,18 +516,13 @@ internal fun OpeningSection(
     val instrument = form.openingInstrumentId?.let { data.instrument(it) }
     val cash = instrument?.kind == InstrumentKind.CASH
     val unit = instrument?.let { if (cash) it.currency else it.unit } ?: ""
-    val converted = cnyEstimate(quotes, instrument, form.openingValue, form.openingFx)
 
     AmountHero(
         label = if (instrument != null && !cash) "期初份额" else "期初金额",
         unit = unit,
         value = form.openingValue,
         onValueChange = { form.openingValue = it },
-        secondary = when {
-            instrument == null -> "未选择持仓"
-            converted != null -> "≈ ${formatCny(converted)}"
-            else -> null
-        },
+        secondary = if (instrument == null) "未选择持仓" else null,
     )
     FormDivider()
     FormRow(
@@ -539,10 +533,6 @@ internal fun OpeningSection(
         showChevron = true,
     ) {
         PositionValue(data, form.openingInstitutionId, form.openingInstrumentId)
-    }
-    if (needsFx(instrument)) {
-        FormDivider()
-        FxRow("汇率", instrument!!.currency, form.openingFx) { form.openingFx = it }
     }
 }
 
@@ -556,7 +546,6 @@ internal fun AdjustmentSection(
     val instrument = form.adjustmentInstrumentId?.let { data.instrument(it) }
     val cash = instrument?.kind == InstrumentKind.CASH
     val unit = instrument?.let { if (cash) it.currency else it.unit } ?: ""
-    val converted = cnyEstimate(quotes, instrument, form.adjustmentValue, form.adjustmentFx)
 
     AmountHero(
         label = if (instrument != null && !cash) "份额增减" else "金额增减",
@@ -565,7 +554,6 @@ internal fun AdjustmentSection(
         onValueChange = { form.adjustmentValue = it },
         secondary = when {
             instrument == null -> "未选择持仓"
-            converted != null -> "≈ ${formatCny(converted)}"
             else -> "可输入负数"
         },
         allowNegative = true,
@@ -591,10 +579,6 @@ internal fun AdjustmentSection(
             onValueChange = { form.adjustmentReason = it },
             placeholder = "必填",
         )
-    }
-    if (needsFx(instrument)) {
-        FormDivider()
-        FxRow("汇率", instrument!!.currency, form.adjustmentFx) { form.adjustmentFx = it }
     }
 }
 
@@ -680,31 +664,17 @@ private fun PriceRow(
     }
 }
 
-@Composable
-private fun FxRow(
-    label: String,
-    currency: String,
-    value: String,
-    onValueChange: (String) -> Unit,
-) {
-    FormRow(
-        icon = Icons.Outlined.CurrencyExchange,
-        iconTint = FolioBlue,
-        label = label,
-    ) {
-        Text(
-            text = "${currency.uppercase()} → CNY",
-            style = MaterialTheme.typography.bodySmall,
-            color = FolioMuted,
-            modifier = Modifier.weight(1f),
-        )
-        InlineNumberField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.width(110.dp),
-        )
+private fun nativeLegValue(
+    quantityText: String,
+    priceText: String,
+    instrument: Instrument?,
+): BigDecimal? {
+    if (instrument == null) return null
+    val quantity = quantityText.toBigDecimalOrNull() ?: return null
+    return if (instrument.kind == InstrumentKind.CASH) {
+        quantity
+    } else {
+        val price = priceText.toBigDecimalOrNull() ?: return null
+        quantity.multiply(price)
     }
 }
-
-private fun needsFx(instrument: Instrument?): Boolean =
-    instrument != null && instrument.currency.uppercase() !in setOf("CNY", "CNH")

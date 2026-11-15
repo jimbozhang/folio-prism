@@ -217,8 +217,6 @@ app/src/main/java/com/jimbozhang/folioprism/
       "position": { "institutionId": "inst_bocom", "instrumentId": "ins_008163" },
       "quantity": "51384762.95",
       "price": "0.9637",
-      "fxToCny": "1",
-      "valueCny": "49519496.05",
       "note": "期初持仓（示例）"
     },
     {
@@ -232,11 +230,6 @@ app/src/main/java/com/jimbozhang/folioprism/
       "toQuantity": "1284637.42",
       "fromPrice": null,
       "toPrice": "1.0274",
-      "fromFxToCny": "1",
-      "toFxToCny": "1",
-      "fromValueCny": "1319836.49",
-      "toValueCny": "1319836.49",
-      "lossValueCny": "0",
       "note": "买入（示例）"
     },
     {
@@ -249,8 +242,6 @@ app/src/main/java/com/jimbozhang/folioprism/
       "destination": { "institutionId": "inst_bocom", "instrumentId": "ins_cny_cash" },
       "amount": "847263.58",
       "currency": "CNY",
-      "fxToCny": "1",
-      "amountCny": "847263.58",
       "immediateExternalWithdrawal": false,
       "externalAccountLabel": null,
       "linkedEventId": null,
@@ -264,8 +255,6 @@ app/src/main/java/com/jimbozhang/folioprism/
       "position": { "institutionId": "inst_bocom", "instrumentId": "ins_cny_cash" },
       "amount": "1364.27",
       "currency": "CNY",
-      "fxToCny": "1",
-      "amountCny": "1364.27",
       "categoryId": "cat_cash",
       "linkedTransferId": null,
       "note": "手续费（示例）"
@@ -280,8 +269,6 @@ app/src/main/java/com/jimbozhang/folioprism/
       "position": { "institutionId": "inst_bocom", "instrumentId": "ins_cny_cash" },
       "amount": "2163847.19",
       "currency": "CNY",
-      "fxToCny": "1",
-      "amountCny": "2163847.19",
       "counterpartyLabel": "日常消费账户",
       "note": "领出（示例）"
     }
@@ -366,11 +353,9 @@ app/src/main/java/com/jimbozhang/folioprism/
 | toQuantity | 转入数量：现金标的为金额（原币），有净值标的为份额/股数 |
 | fromPrice | 转出标的单价（有净值标的必填；现金标的为 null） |
 | toPrice | 转入标的单价（有净值标的必填；现金标的为 null） |
-| fromFxToCny | 转出币种 → CNY 的汇率（CNY=1；CNH v1=1） |
-| toFxToCny | 转入币种 → CNY 的汇率 |
-| fromValueCny | 转出价值（CNY），保存时计算并写入 |
-| toValueCny | 转入价值（CNY），保存时计算并写入 |
-| lossValueCny | `fromValueCny − toValueCny`；可为正（损耗）或负（收益） |
+| lossAmount | 嵌入的手续费/损耗，原币；可为正（损耗）或负（收益） |
+| lossCurrency | 损耗币种 |
+| feePosition / feeAmount / feeCurrency | 可选：从独立现金账户支付的手续费 |
 | note | 备注 |
 
 计算：
@@ -378,20 +363,13 @@ app/src/main/java/com/jimbozhang/folioprism/
 ```
 fromNativeValue = fromQuantity × (fromPrice ?: 1)   // 现金标的 price 视为 1
 toNativeValue   = toQuantity   × (toPrice ?: 1)
-fromValueCny    = fromNativeValue × fromFxToCny
-toValueCny      = toNativeValue   × toFxToCny
-lossValueCny    = fromValueCny − toValueCny
 ```
 
-- 默认 `fromValueCny == toValueCny`；允许不同。
-- 当 `lossValueCny != 0` 时，App 自动生成一笔关联的「损耗支出」事件（`expense`，`position=null`，`amountCny=lossValueCny`，`linkedTransferId=transfer.id`），并按其类别归属规则设置 `categoryId`：
-  - 若 only 一侧为现金标的：归属于非现金一侧的类别；
-  - 若两侧都是非现金：归属于转出侧类别；
-  - 若两侧都是现金：归属于现金类别。
-- 用户可编辑/删除自动生成的损耗支出；删除后转账仍保留 `lossValueCny`，但类别盈亏不再扣减（数据正确性由用户负责）。
-- 同一标的跨机构搬仓：两侧都是 quoted，`fromQuantity=toQuantity`、`fromPrice=toPrice`，`lossValueCny=0`。
+- 同币种转账默认 `lossAmount = fromNativeValue − toNativeValue`；跨币种换汇的 FX 损耗由用户按原币输入。
+- `lossAmount` 是嵌入的手续费/损耗，不自动生成 `expense` 事件；类别盈亏直接按 `lossAmount` 扣减。
+- 独立现金手续费记在 `feePosition`/`feeAmount`/`feeCurrency`，回放时从该现金账户扣除。
+- 同一标的跨机构搬仓：两侧都是 quoted，`fromQuantity=toQuantity`、`fromPrice=toPrice`，`lossAmount=0`。
 - 基金转换：拆成卖出 + 买入两笔转账（允许同一天），不设单独事件。
-- 不设 `fee` 字段；手续费使用独立的 `expense` 事件（FR-TX-03）。
 
 #### income（收益）
 
@@ -402,8 +380,6 @@ lossValueCny    = fromValueCny − toValueCny
 | destination | 入账现金标的持仓（必须是 `kind=cash`） |
 | amount | 收益金额（原币） |
 | currency | 收益币种 |
-| fxToCny | 币种 → CNY 汇率 |
-| amountCny | 折算后的 CNY 金额（保存时写入） |
 | immediateExternalWithdrawal | 是否立即转出到外部消费账户 |
 | externalAccountLabel | 外部账户标签（如「日常消费账户」） |
 | linkedEventId | 若立即转出，关联的外部出金事件 ID |
@@ -415,7 +391,7 @@ lossValueCny    = fromValueCny − toValueCny
 - 利息：source 可为空（银行利息）；destination 为现金标的。
 - `immediateExternalWithdrawal=true` 时，App 生成一笔关联的外部出金（`external`，`direction=out`，`classification=consumption`），金额等于到账金额；双向 `linkedEventId`。
 - 分红/利息不减少源持仓数量。
-- 保存时写入 `amountCny`、`fxToCny`；如能取到来源标的当日价格，也写入 `sourcePrice`（用于快照/审计）。
+- 如能取到来源标的当日价格，可写入 `sourcePrice`（用于审计；不写汇率/CNY 金额）。
 
 #### expense（支出）
 
@@ -424,8 +400,6 @@ lossValueCny    = fromValueCny − toValueCny
 | position | 可选；若为现金标的持仓，则真实扣减该现金余额；若为 null，表示转账损耗等非现金支出 |
 | amount | 支出金额（原币），**可以为负值**（返还/收益） |
 | currency | 币种 |
-| fxToCny | 币种 → CNY 汇率 |
-| amountCny | 折算后的 CNY 金额（保存时写入） |
 | categoryId | 盈亏归属类别（手续费/损耗计入哪个类别） |
 | linkedTransferId | 若由转账差额自动生成，关联转账 ID |
 | note | 备注 |
@@ -445,7 +419,6 @@ lossValueCny    = fromValueCny − toValueCny
 | classification | `capital` / `consumption` |
 | position | 现金标的持仓（机构 × 现金标的） |
 | amount / currency | 金额与原币 |
-| fxToCny / amountCny | 汇率与 CNY 金额（保存时写入） |
 | counterpartyLabel | 外部账户标签，如「日常消费账户」「工资卡」 |
 | note | 备注 |
 
@@ -464,8 +437,6 @@ lossValueCny    = fromValueCny − toValueCny
 | quantity | 有净值标的的期初份额 |
 | amount | 现金标的的期初金额（与 quantity 二选一，按标的 kind 决定） |
 | price | 有净值标的的期初单价（可选快照） |
-| fxToCny | 币种 → CNY 汇率（可选快照） |
-| valueCny | 期初 CNY 价值（可选快照） |
 | date | 期初时点 |
 
 - 期初事件本身不产生盈亏，也不产生资金流；它定义回放的起点。
@@ -479,8 +450,6 @@ lossValueCny    = fromValueCny − toValueCny
 | deltaQuantity | 有净值标的的数量增减（可为负） |
 | deltaAmount | 现金标的的金额增减（可为负） |
 | price | 事件日价格快照（可选） |
-| fxToCny | 汇率快照（可选） |
-| valueCny | 调整的 CNY 价值（可选） |
 | reason | 原因（必填） |
 | date | 时间 |
 
@@ -556,7 +525,7 @@ valueCNY(position @ t):
 - 明细展示使用原币：`nativeValue = quantity × (price ?: 1)`；CNY 只用于汇总。
 - 美元计价资产：显示 USD 价值 + CNY 等值；人民币计价资产：只显示 CNY，不显示 USD 等值。
 - 类别汇总：CNY 口径；若类别内存在美元计价资产，额外显示美元资产小计（原币）及其 CNY 等值，不把整个类别折算为 USD。
-- 价格/汇率缺失时，`valueCNY = null`（历史统计中标记缺口）；当前估值缺失则启动门禁失败。
+- 价格或当前汇率缺失时，`valueCNY = null`（历史统计中标记缺口）；当前估值缺失则启动门禁失败。
 
 ### 4.2 类别聚合与双口径
 
@@ -622,8 +591,8 @@ P&L_category(c) = V_c(t1) - V_c(t0) - netCapitalFlowInto(c) - transferLoss(c) - 
 - `V(t)` 使用历史收盘价/净值/汇率估值；缺失时按 4.5 用事件快照近似。
 - `externalCapitalIn/Out` 只包括 `external` 事件中 `capital` 与 `consumption` 的分类；它们都是本金流，不计盈亏。
 - `netCapitalFlowInto(c)` 包括：
-  - 跨类别转账：来源类别按 `fromValueCny` 流出，目标类别按 `toValueCny` 流入；
-  - 分红/利息（有 source）：视为跨类别转账，来源类别流出 `amountCny`，现金类别流入 `amountCny`；
+  - 跨类别转账：来源类别按按当前汇率折算的转出价值流出，目标类别按折算的转入价值流入；
+  - 分红/利息（有 source）：视为跨类别转账，来源类别流出按当前汇率折算的金额，现金类别流入同一金额；
   - 外部本金入金/出金：记入现金类别；
   - 调整事件：按事件日价格/金额折算后，计入对应类别（视为资金流）。
 - **不计入资金流**：
@@ -633,14 +602,14 @@ P&L_category(c) = V_c(t1) - V_c(t0) - netCapitalFlowInto(c) - transferLoss(c) - 
   - 再投资：由用户手工录入买入转账，按转账处理。
 - `transferLoss(c)`：自动生成的损耗支出（`expense`，position=null）按 `categoryId` 汇总；正值扣减盈亏，负值增加盈亏。
 - `cashExpenseAttribution(c)`：现金支出事件若 `categoryId` 不是现金类别，则在类别盈亏中把金额从现金类别转移到目标类别（总盈亏不变）；实现上：
-  - 现金类别 P&L 加上 `amountCny`（抵消现金减少）；
-  - 目标类别 P&L 减去 `amountCny`。
+  - 现金类别 P&L 加上按当前汇率折算的支出金额（抵消现金减少）；
+  - 目标类别 P&L 减去同一金额。
 - 分红/利息在支付瞬间是「来源持仓净值下降 + 现金增加」的转移，类别合计盈亏为 0；不代表没有收益，而是收益已通过净值/现金体现。v1 不单列「分红收入」，后续迭代再加。
 
 #### 汇率
 
-- 估值使用目标日的历史汇率（缺失时用最近可用汇率，标记）。
-- 资金流按事件发生日的汇率折 CNY；事件中已保存 `fromValueCny`/`toValueCny`/`amountCny`，优先使用事件快照，保证可复现。
+- 只使用**当前汇率**；不保存、不查询历史汇率。
+- 估值、资金流、类别汇总都按当前汇率折 CNY；外币资产本身按原币显示。
 - CNH v1 按 1:1 CNY。
 
 #### 历史价格与缺口
@@ -650,17 +619,13 @@ P&L_category(c) = V_c(t1) - V_c(t0) - netCapitalFlowInto(c) - transferLoss(c) - 
 - 手工补录价格优先于自动价格。
 - 若历史缓存/数据源不可用，按 4.5 用事件快照计算近似值，并标记「近似」。
 
-### 4.5 事件快照与近似回退
+### 4.5 事件数据与近似回退
 
-每笔事件保存了当时的价格/汇率与 CNY 价值（见 3.2）。这保证即使历史行情缓存损坏或数据源失效，也能：
+每笔事件只保存原币数量/金额/价格/费用/损耗，不保存汇率或 CNY 价值。外币估值和汇总使用当前汇率。
 
-1. **审计**：查看每笔交易发生时的价格、汇率与价值。
-2. **近似盈亏**：对区间 `[t0, t1]`，若缺少历史日估值：
-   - 找到每个持仓在 `t0` 之前最近的事件价格快照，以及 `t1` 之前最近的事件价格快照（或当前价格）；
-   - 用这些快照估算 `V(t0)`、`V(t1)`；
-   - 资金流直接使用事件中保存的 CNY 金额；
-   - 结果标记「近似（基于事件快照）」。
-3. **交易间盈亏**：对已实现的部分，直接用转出/转入事件中的价值计算；对未平仓部分，用最近事件价格或当前价格估算。
+1. **审计**：查看每笔交易发生时的原币数量、价格、费用/损耗。
+2. **近似盈亏**：对区间 `[t0, t1]`，若缺少历史日估值，可用最近的事件原币价格快照与当前汇率估算；结果标记「近似」。
+3. **交易间盈亏**：对已实现的部分，直接用转出/转入事件的原币价值计算；对未平仓部分，用最近事件价格或当前价格估算。
 
 近似算法必须保守、可解释；不得把近似结果伪装成精确值。
 
@@ -689,7 +654,7 @@ P&L_category(c) = V_c(t1) - V_c(t0) - netCapitalFlowInto(c) - transferLoss(c) - 
   - 现金手续费（position≠null）与非现金转账损耗（position=null）都计入；
   - 负值支出（返还/收益）参与抵扣；
   - 按月份、类别（`categoryId`）、支出类型分组；
-  - 汇总金额使用 `amountCny`。
+  - 汇总金额按当前汇率折算。
 - 不依赖历史行情，始终可计算。
 
 ### 4.9 机构/币种分布
@@ -953,10 +918,10 @@ Documents/folio-prism/
   - 类型页签：转账 / 收益 / 支出 / 外部 / 期初 五个文字页签 + 「更多」下拉（调整）；金色下划线标识当前类型；
   - 金额区：大字号金额输入 + 原币/单位 + 自动折算的 CNY 等值；转账页显示转出/转入两段金额与损耗摘要；
   - 账户区：转出/转入两列显示机构与标的，中间按钮可交换两侧；点击打开底部持仓选择面板（机构 Chip + 标的列表）；
-  - 价格与汇率区：按当前行情预填单价/汇率，可修改；手续费默认 0，可输入现金侧币种的手续费；
+  - 价格区：按当前行情预填单价，可修改；手续费/损耗按原币输入，可指定是否从现金账户扣；
   - 时间行：日期打开日期选择器，时间胶囊打开时间选择器；
   - 备注行；底部金色保存按钮与校验错误提示。
-  - **转账**：底层统一为转账；填写转出/转入持仓、转出数量、转入数量、价格、汇率、手续费（默认 0）；差额自动生成损耗支出，手续费非 0 时自动生成关联的手续费支出（手续费币种取现金一侧的币种；无现金一侧时按 CNY 计为非现金损耗）。
+  - **转账**：底层统一为转账；填写转出/转入持仓、转出数量、转入数量、价格、手续费/损耗（原币）；差额或 FX 损耗记入 `lossAmount`，独立现金手续费记入 `feeAmount`。
   - **收益**：分红/利息；来源可选；入账现金账户；金额；是否立即转出。
   - **外部入金/出金**：本金/消费。
   - **支出**：手续费/损耗；金额可为负值；选择现金账户或非现金损耗。
@@ -1030,7 +995,7 @@ Documents/folio-prism/
 
 - Material 3 light；中文 locale。
 - 金额格式化：千分位、¥/$/HK$ 前缀、按精度四舍五入。
-- 单项资产按原币显示；美元资产额外显示 CNY 等值。
+- 单项资产按原币显示；不显示 CNY 等值。
 - 百分比：1 位小数（目标比例按输入展示）。
 - 颜色：沿用 invest-folio 的类别颜色（可编辑）：红利 `#ff7675`、成长 `#e17055`、美股 `#f9a825`、美债 `#0984e3`、中债 `#6c5ce7`、黄金 `#f9ca24`、现金 `#b2bec3`。
 - 表格/条形图使用 Compose 组件，避免 WebView。
@@ -1147,7 +1112,7 @@ adb shell am start -n com.jimbozhang.folioprism/.MainActivity
 | 固定路径 + MANAGE_EXTERNAL_STORAGE 在 HyperOS 上的授权/写入行为 | 无法读写数据 | 在 Redmi 14C 上优先验证；权限拒绝时调试页说明；直接文件 I/O 简化原子写入 |
 | 不阻止负持仓/负现金 | 用户误操作导致数据异常 | 按 D-25 由用户负责；计算引擎处理负值不崩溃；备份可恢复 |
 | 双口径/再平衡公式复杂，易回归 | 首页数字错误 | 以 portfolio.html 为黄金基准写单测；公式集中在 domain；UI 不重复实现 |
-| 多币种/汇率精度 | 总资产偏差 | BigDecimal；事件日汇率落库；历史汇率缓存；CNH v1 按 1:1 |
+| 多币种/汇率精度 | 总资产偏差 | BigDecimal；只使用当前汇率；不保存历史汇率；CNH v1 按 1:1 |
 | 类别可调整导致历史统计变化 | 用户困惑 | 修改类别时警告；文档说明会重算历史归属 |
 | 1 万条事件的 JSON/回放性能 | 启动/操作变慢 | 主数据与缓存分离；回放增量优化；性能测试基准；必要时缓存派生状态 |
 | 转账双数量/损耗语义复杂 | 录入/计算错误 | 表单联动计算；损耗支出自动生成并可编辑；单测覆盖买/卖/转换/换汇/搬仓 |

@@ -2,6 +2,7 @@ package com.jimbozhang.folioprism.domain.model
 
 import com.jimbozhang.folioprism.domain.money.BigDecimalAsStringSerializer
 import java.math.BigDecimal
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -126,8 +127,10 @@ data class PositionRef(
     val instrumentId: String,
 )
 
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 @Serializable
 data class PortfolioData(
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val schemaVersion: Int = 1,
     val meta: Meta = Meta(),
     val settings: Settings = Settings(),
