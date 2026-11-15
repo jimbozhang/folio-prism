@@ -25,7 +25,7 @@
 | 依赖注入 | 手工组合根 | App 规模小，不引入 Hilt/Koin |
 | 构建 | Gradle Wrapper + Android SDK cmdline-tools | JDK 17；debug APK；自用不上架 |
 | minSdk | 26 | 覆盖两台目标机；Redmi 14C 出厂 Android 14 |
-| 显示名 | 投资组合 | 已确认 |
+| 显示名 | 资产配置 | 已确认 |
 | applicationId | `com.jimbozhang.folioprism` | 已确认 |
 
 **不引入**：Room、Retrofit、Hilt、WebView、Flutter、React Native、SAF 目录选择。
@@ -1129,7 +1129,7 @@ adb shell am start -n com.jimbozhang.folioprism/.MainActivity
 - Q-02：v1 将 CNH 视作 CNY；后续迭代再支持 CNH/CNY 汇率。
 - Q-03：接受历史缺口 + 手工补录。
 - Q-04：刷新失败进入全屏调试页，直到刷新成功。
-- Q-05：显示名「投资组合」，包名 `com.jimbozhang.folioprism`；图标后续设计。
+- Q-05：显示名「资产配置」，包名 `com.jimbozhang.folioprism`；图标后续设计。
 - Q-06：预置 7 类规则与类别颜色；机构/标的由用户创建。
 - Q-07：默认保留 5 份备份。
 - Q-08：日志允许代码/名称，不含金额、数量、汇率。

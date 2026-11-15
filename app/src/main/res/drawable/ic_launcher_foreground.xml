@@ -5,28 +5,40 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
+    <!-- Incoming beam -->
+    <path
+        android:pathData="M20,54 L39,54"
+        android:strokeColor="#FF2F2B25"
+        android:strokeLineCap="round"
+        android:strokeWidth="4.6" />
+
+    <!-- Seven flat spectrum bands (red -> violet) -->
+    <path
+        android:fillColor="#FFD94A4A"
+        android:pathData="M65,54 L84,34 L84,39.7143 Z" />
+    <path
+        android:fillColor="#FFE58A2E"
+        android:pathData="M65,54 L84,39.7143 L84,45.4286 Z" />
+    <path
+        android:fillColor="#FFD8B52C"
+        android:pathData="M65,54 L84,45.4286 L84,51.1429 Z" />
+    <path
+        android:fillColor="#FF4A9E68"
+        android:pathData="M65,54 L84,51.1429 L84,56.8571 Z" />
+    <path
+        android:fillColor="#FF2F98B5"
+        android:pathData="M65,54 L84,56.8571 L84,62.5714 Z" />
+    <path
+        android:fillColor="#FF4668C4"
+        android:pathData="M65,54 L84,62.5714 L84,68.2857 Z" />
+    <path
+        android:fillColor="#FF8256B8"
+        android:pathData="M65,54 L84,68.2857 L84,74 Z" />
+
     <!-- Prism outline -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M54,24 L86,82 L22,82 Z" />
-    <path
-        android:fillColor="#FF1E6F5C"
-        android:pathData="M54,38 L74,76 L34,76 Z" />
-
-    <!-- Refracted beams -->
-    <path
-        android:pathData="M54,46 L76,62"
-        android:strokeColor="#FFFF7675"
-        android:strokeLineCap="round"
-        android:strokeWidth="3.5" />
-    <path
-        android:pathData="M54,46 L60,68"
-        android:strokeColor="#FFF9A825"
-        android:strokeLineCap="round"
-        android:strokeWidth="3.5" />
-    <path
-        android:pathData="M54,46 L38,66"
-        android:strokeColor="#FF0984E3"
-        android:strokeLineCap="round"
-        android:strokeWidth="3.5" />
+        android:pathData="M54,28 L81,75 L27,75 Z"
+        android:strokeColor="#FF2F2B25"
+        android:strokeLineJoin="round"
+        android:strokeWidth="3.2" />
 </vector>

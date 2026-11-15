@@ -1,6 +1,6 @@
 # folio-prism
 
-个人投资组合管理 Android App。显示名：**投资组合**。
+个人投资组合管理 Android App。显示名：**资产配置**。
 
 用一个 App 替代现有的两套工具：
 
@@ -11,6 +11,12 @@
 
 - [需求文档](docs/REQUIREMENTS.md)
 - [设计文档](docs/DESIGN.md)
+
+## App 图标
+
+![Folio Prism 图标](docs/icon-preview.png)
+
+淡宣纸色底、墨色三棱镜与入射光、七条扁平彩虹色带；同时提供 Android 13+ 单色主题图标。
 
 ## 项目状态
 
