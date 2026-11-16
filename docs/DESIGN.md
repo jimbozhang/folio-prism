@@ -129,6 +129,11 @@ app/src/main/java/com/jimbozhang/folioprism/
 | minPct / maxPct | decimal string | 允许区间 |
 | specialRule | `"dividend"` \| null | 红利类使用 totalValue 基数；其余为 null |
 
+默认规则（仅当主 JSON 缺失时用于新建文件；JSON 存在时其 `settings.categories` 完全覆盖默认值）：
+
+- 红利：目标 32%（对总资产），区间 28.8%–35.2%；
+- 其余 6 类：目标各为去除红利后基数的 1/6（≈16.67%），区间为标准值的 ±10%（15%–18.33%）。
+
 #### Institution（机构）
 
 | 字段 | 类型 | 说明 |
@@ -827,7 +832,7 @@ Documents/folio-prism/
 ### 7.7 首次启动与空状态
 
 1. 检查存储权限；未授予 → 系统授权页。
-2. 创建 `Documents/folio-prism/`、`folio-prism.json`、`price-cache.json`；预置 7 类规则与颜色。
+2. 创建 `Documents/folio-prism/`、`folio-prism.json`、`price-cache.json`；预置 7 类默认规则与颜色：红利目标 32%（区间 28.8%–35.2%），其余 6 类目标各为去除红利后基数的 1/6（≈16.67%，区间 15%–18.33%）。主 JSON 的 `settings.categories` 是再平衡规则的唯一权威来源，默认值只在文件缺失时用于新建。
 3. 直接进入空状态首页（不设应用内启动设置页，不主动引导）。
 
 ### 7.8 主题与格式化

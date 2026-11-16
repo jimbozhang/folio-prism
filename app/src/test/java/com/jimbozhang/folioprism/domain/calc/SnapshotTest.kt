@@ -11,6 +11,7 @@ import com.jimbozhang.folioprism.domain.cashInstrument
 import com.jimbozhang.folioprism.domain.portfolio
 import com.jimbozhang.folioprism.domain.quotedInstrument
 import com.jimbozhang.folioprism.domain.model.CategoryIds
+import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.money.bd
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
@@ -52,6 +53,33 @@ class SnapshotTest {
         PositionKey(INST_A, GOLD) to bd("1"),
     )
 
+    /**
+     * Explicit category rules keep these tests independent of DefaultData.
+     */
+    private fun dataWithCategory(
+        categoryId: String,
+        target: String? = null,
+        min: String? = null,
+        max: String? = null,
+    ): PortfolioData {
+        val base = data()
+        return base.copy(
+            settings = base.settings.copy(
+                categories = base.settings.categories.map { category ->
+                    if (category.id != categoryId) {
+                        category
+                    } else {
+                        category.copy(
+                            targetPct = target?.let(::bd) ?: category.targetPct,
+                            minPct = min?.let(::bd) ?: category.minPct,
+                            maxPct = max?.let(::bd) ?: category.maxPct,
+                        )
+                    }
+                },
+            ),
+        )
+    }
+
     @Test
     fun totalsUseDualDenominator() {
         val snapshot = SnapshotCalculator.build(data(), positions(), provider, date)
@@ -74,7 +102,8 @@ class SnapshotTest {
 
     @Test
     fun nonDividendCategoryUsesPortfolioValueAsBase() {
-        val snapshot = SnapshotCalculator.build(data(), positions(), provider, date)
+        val snapshot =
+            SnapshotCalculator.build(dataWithCategory(CategoryIds.GROWTH, target = "24"), positions(), provider, date)
         val growth = snapshot.categories.first { it.category.id == CategoryIds.GROWTH }
 
         assertDecimal("240", growth.valueCny)
@@ -84,7 +113,8 @@ class SnapshotTest {
 
     @Test
     fun categorySharesUseApplicableBaseButVisualsUseTotal() {
-        val snapshot = SnapshotCalculator.build(data(), positions(), provider, date)
+        val snapshot =
+            SnapshotCalculator.build(dataWithCategory(CategoryIds.GROWTH, target = "24"), positions(), provider, date)
         val growth = snapshot.categories.first { it.category.id == CategoryIds.GROWTH }
 
         assertDecimal("0.0606060606", growth.visualShare)
@@ -93,7 +123,8 @@ class SnapshotTest {
 
     @Test
     fun inRangeUsesCategoryShare() {
-        val snapshot = SnapshotCalculator.build(data(), positions(), provider, date)
+        val snapshot =
+            SnapshotCalculator.build(dataWithCategory(CategoryIds.GOLD, min = "27", max = "33"), positions(), provider, date)
         val gold = snapshot.categories.first { it.category.id == CategoryIds.GOLD }
 
         assertDecimal("0.2747252747", gold.share)
@@ -103,7 +134,8 @@ class SnapshotTest {
 
     @Test
     fun goldThresholdsAreComputed() {
-        val snapshot = SnapshotCalculator.build(data(), positions(), provider, date)
+        val snapshot =
+            SnapshotCalculator.build(dataWithCategory(CategoryIds.GOLD, min = "27", max = "33"), positions(), provider, date)
         val gold = snapshot.categories.first { it.category.id == CategoryIds.GOLD }
 
         // p * other / ((1 - p) * grams), other = 3640 - 1000 = 2640, grams = 1

@@ -6,9 +6,14 @@ import com.jimbozhang.folioprism.domain.model.Meta
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.Settings
 import com.jimbozhang.folioprism.domain.money.bd
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.OffsetDateTime
 
 object DefaultData {
+
+    private const val PCT_SCALE = 10
+    private val SIX = BigDecimal(6)
 
     fun empty(now: String = OffsetDateTime.now().toString()): PortfolioData =
         PortfolioData(
@@ -16,6 +21,12 @@ object DefaultData {
             settings = Settings(categories = defaultCategories()),
         )
 
+    /**
+     * Defaults applied only when the user JSON file does not exist:
+     * dividend targets 32% of total (±10% band); each of the other six
+     * categories targets 1/6 of the non-dividend base, with a ±10% band.
+     * The JSON's `settings.categories` always takes precedence.
+     */
     fun defaultCategories(): List<Category> = listOf(
         Category(
             id = CategoryIds.DIVIDEND,
@@ -27,59 +38,30 @@ object DefaultData {
             maxPct = bd("35.2"),
             specialRule = "dividend",
         ),
-        Category(
-            id = CategoryIds.GROWTH,
-            name = "成长",
-            order = 2,
-            color = "#e17055",
-            targetPct = bd("24"),
-            minPct = bd("21.6"),
-            maxPct = bd("26.4"),
-        ),
-        Category(
-            id = CategoryIds.US_EQUITY,
-            name = "美股",
-            order = 3,
-            color = "#f9a825",
-            targetPct = bd("22"),
-            minPct = bd("18"),
-            maxPct = bd("24.2"),
-        ),
-        Category(
-            id = CategoryIds.US_BOND,
-            name = "美债",
-            order = 4,
-            color = "#0984e3",
-            targetPct = bd("4"),
-            minPct = bd("1.2"),
-            maxPct = bd("5"),
-        ),
-        Category(
-            id = CategoryIds.CN_BOND,
-            name = "中债",
-            order = 5,
-            color = "#6c5ce7",
-            targetPct = bd("8"),
-            minPct = bd("6"),
-            maxPct = bd("10"),
-        ),
-        Category(
-            id = CategoryIds.GOLD,
-            name = "黄金",
-            order = 6,
-            color = "#f9ca24",
-            targetPct = bd("30"),
-            minPct = bd("27"),
-            maxPct = bd("33"),
-        ),
-        Category(
-            id = CategoryIds.CASH,
-            name = "现金",
-            order = 7,
-            color = "#b2bec3",
-            targetPct = bd("12"),
-            minPct = bd("2"),
-            maxPct = bd("22"),
-        ),
+        remainingCategory(CategoryIds.GROWTH, "成长", 2, "#e17055"),
+        remainingCategory(CategoryIds.US_EQUITY, "美股", 3, "#f9a825"),
+        remainingCategory(CategoryIds.US_BOND, "美债", 4, "#0984e3"),
+        remainingCategory(CategoryIds.CN_BOND, "中债", 5, "#6c5ce7"),
+        remainingCategory(CategoryIds.GOLD, "黄金", 6, "#f9ca24"),
+        remainingCategory(CategoryIds.CASH, "现金", 7, "#b2bec3"),
     )
+
+    private fun remainingCategory(
+        id: String,
+        name: String,
+        order: Int,
+        color: String,
+    ): Category = Category(
+        id = id,
+        name = name,
+        order = order,
+        color = color,
+        targetPct = remainingPct(100),
+        minPct = remainingPct(90),
+        maxPct = remainingPct(110),
+    )
+
+    /** Percent of the non-dividend base: 100/6 ≈ 16.6667, 90/6 = 15, 110/6 ≈ 18.3333. */
+    private fun remainingPct(numerator: Int): BigDecimal =
+        BigDecimal(numerator).divide(SIX, PCT_SCALE, RoundingMode.HALF_UP)
 }
