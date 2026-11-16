@@ -61,6 +61,7 @@ import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.goldPremium
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
+import com.jimbozhang.folioprism.ui.components.HoldingRow
 import com.jimbozhang.folioprism.ui.components.formatCny
 import com.jimbozhang.folioprism.ui.components.formatNative
 import com.jimbozhang.folioprism.ui.components.formatPercent
@@ -401,7 +402,7 @@ private fun CategoryCard(
 ) {
     val categoryColor = remember(category.category.color) { parseCategoryColor(category.category) }
     val statusColor = if (category.inRange) FolioGreen else FolioCoral
-    val holdings = remember(category.category.id, positions, data.instruments) {
+    val holdings = remember(category.category.id, positions, data.instruments, snapshot) {
         positions.entries
             .filter { (key, quantity) ->
                 quantity.signum() != 0 &&
@@ -494,23 +495,13 @@ private fun CategoryCard(
             }
             Spacer(modifier = Modifier.height(10.dp))
             CategoryRangeBar(category = category, color = categoryColor)
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
+            usdSubtotal?.let { native ->
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = if (category.inRange) "区间内" else "偏离区间",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = statusColor,
+                    text = "美元资产 ${formatNative(native, "USD")}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                usdSubtotal?.let { native ->
-                    Text(
-                        text = "美元资产 ${formatNative(native, "USD")}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
             if (category.incomplete) {
                 Spacer(modifier = Modifier.height(4.dp))
@@ -524,6 +515,23 @@ private fun CategoryCard(
             if (expanded) {
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = FolioDivider)
+                val offsets = listOfNotNull(
+                    category.gapToMinCny?.let { "下限" to it },
+                    category.gapToTargetCny?.let { "目标" to it },
+                    category.gapToMaxCny?.let { "上限" to it },
+                )
+                if (offsets.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        offsets.forEach { (label, diff) ->
+                            Text(
+                                text = offsetText(label, diff),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
                 if (holdings.isEmpty()) {
                     Text(
                         text = "该类别暂无持仓",
@@ -532,6 +540,7 @@ private fun CategoryCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
+                    Spacer(modifier = Modifier.height(4.dp))
                     holdings.forEach { (key, quantity) ->
                         HoldingRow(
                             data = data,
@@ -611,68 +620,6 @@ private fun CategoryRangeBar(category: CategorySnapshot, color: Color) {
 }
 
 @Composable
-private fun HoldingRow(
-    data: PortfolioData,
-    quotes: QuoteSnapshot,
-    snapshot: PortfolioSnapshot,
-    key: PositionKey,
-    quantity: BigDecimal,
-) {
-    val instrument = data.instrument(key.instrumentId) ?: return
-    val institutionName = data.institutions.firstOrNull { it.id == key.institutionId }?.name
-        ?: key.institutionId
-    val quotePrice = quotes.quotes[instrument.id]?.price ?: instrument.quote.manualPrice
-    val price = if (instrument.kind == InstrumentKind.QUOTED && quotePrice != null) {
-        if (Valuation.isGold(instrument)) quotePrice.add(data.goldPremium(key.institutionId))
-        else quotePrice
-    } else {
-        null
-    }
-    val nativeValue = when {
-        instrument.kind == InstrumentKind.CASH -> quantity
-        price != null -> quantity.multiply(price)
-        else -> null
-    }
-    val valueText = if (nativeValue == null) {
-        "--"
-    } else {
-        formatNative(nativeValue, instrument.currency)
-    }
-
-    Column(modifier = Modifier.padding(vertical = 9.dp)) {
-        Text(
-            text = "${instrument.code} ${instrument.name}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = FolioInk,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(modifier = Modifier.height(3.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "$institutionName · ${formatQuantity(quantity)} ${instrument.unit}" +
-                    (price?.let { " × " + formatNative(it, instrument.currency) } ?: ""),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = valueText,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-        }
-    }
-}
-
-@Composable
 private fun EmptyHomeCard() {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -708,3 +655,9 @@ private fun MissingPricesBanner() {
 private fun parseCategoryColor(category: Category): Color =
     runCatching { Color(android.graphics.Color.parseColor(category.color)) }
         .getOrElse { FolioGold }
+
+private fun offsetText(label: String, diff: BigDecimal): String = when {
+    diff.signum() > 0 -> "高于$label ${formatCny(diff)}"
+    diff.signum() < 0 -> "低于$label ${formatCny(diff.abs())}"
+    else -> "与${label}持平"
+}

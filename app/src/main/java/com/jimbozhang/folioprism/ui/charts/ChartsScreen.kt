@@ -57,7 +57,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -68,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import com.jimbozhang.folioprism.data.price.LivePriceProvider
 import com.jimbozhang.folioprism.domain.calc.EventReplay
 import com.jimbozhang.folioprism.domain.calc.PortfolioSnapshot
+import com.jimbozhang.folioprism.domain.calc.PositionKey
 import com.jimbozhang.folioprism.domain.calc.SnapshotCalculator
 import com.jimbozhang.folioprism.domain.calc.localDate
 import com.jimbozhang.folioprism.domain.calc.parseEventTime
@@ -81,9 +84,11 @@ import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.ExternalDirection
 import com.jimbozhang.folioprism.domain.model.ExternalEvent
 import com.jimbozhang.folioprism.domain.model.PortfolioData
+import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import com.jimbozhang.folioprism.ui.HistoryUiState
 import com.jimbozhang.folioprism.ui.components.DateRangePickerDialog
+import com.jimbozhang.folioprism.ui.components.HoldingRow
 import com.jimbozhang.folioprism.ui.components.RangeArrowButton
 import com.jimbozhang.folioprism.ui.components.formatCny
 import com.jimbozhang.folioprism.ui.components.formatPercent
@@ -229,6 +234,9 @@ fun ChartsScreen(
                     historyState = historyState,
                     range = range,
                     snapshot = snapshot,
+                    data = data,
+                    quotes = quotes,
+                    positions = positions,
                     categoryId = selectedCategory?.id ?: "",
                     categoryName = selectedCategory?.name ?: "",
                     onRetry = { onLoadHistory(range.from, range.to) },
@@ -529,6 +537,9 @@ private fun LazyListScope.categoryAssetsContent(
     historyState: HistoryUiState,
     range: DateRange,
     snapshot: PortfolioSnapshot,
+    data: PortfolioData,
+    quotes: QuoteSnapshot,
+    positions: Map<PositionKey, BigDecimal>,
     categoryId: String,
     categoryName: String,
     onRetry: () -> Unit,
@@ -555,7 +566,58 @@ private fun LazyListScope.categoryAssetsContent(
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
         else -> item { LoadingBlock() }
     }
-    item { CategoryTable(snapshot, categoryId) }
+    item {
+        CategoryHoldingsBlock(
+            data = data,
+            quotes = quotes,
+            snapshot = snapshot,
+            positions = positions,
+            categoryId = categoryId,
+        )
+    }
+}
+
+@Composable
+private fun CategoryHoldingsBlock(
+    data: PortfolioData,
+    quotes: QuoteSnapshot,
+    snapshot: PortfolioSnapshot,
+    positions: Map<PositionKey, BigDecimal>,
+    categoryId: String,
+) {
+    val holdings = remember(categoryId, positions, data.instruments, snapshot) {
+        positions.entries
+            .filter { (key, quantity) ->
+                quantity.signum() != 0 &&
+                    data.instrument(key.instrumentId)?.categoryId == categoryId
+            }
+            .sortedByDescending { (key, _) -> snapshot.positionValues[key] ?: BigDecimal.ZERO }
+    }
+    WhiteBlock {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            SectionTitle("持仓明细")
+            if (holdings.isEmpty()) {
+                Text(
+                    text = "该类别暂无持仓",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioMuted,
+                )
+            } else {
+                holdings.forEachIndexed { index, (key, quantity) ->
+                    if (index > 0) {
+                        HorizontalDivider(color = FolioDivider)
+                    }
+                    HoldingRow(
+                        data = data,
+                        quotes = quotes,
+                        snapshot = snapshot,
+                        key = key,
+                        quantity = quantity,
+                    )
+                }
+            }
+        }
+    }
 }
 
 private fun LazyListScope.categoryPnlContent(
@@ -872,16 +934,33 @@ private fun BigValueHeader(label: String, value: String, color: Color) {
 
 @Composable
 private fun CategoryPnlBlock(rows: List<CategoryPnl>) {
-    val maxAbs = rows.mapNotNull { it.pnlCny?.abs() }.maxOrNull() ?: BigDecimal.ZERO
-    val totalAbs = rows.mapNotNull { it.pnlCny?.abs() }
+    val sorted = rows.sortedWith(
+        compareBy<CategoryPnl> { it.pnlCny == null }
+            .thenByDescending { it.pnlCny ?: BigDecimal.ZERO },
+    )
+    val maxGain = sorted.mapNotNull { it.pnlCny }
+        .maxOrNull()
+        ?.coerceAtLeast(BigDecimal.ZERO)
+        ?: BigDecimal.ZERO
+    val maxLoss = sorted.mapNotNull { it.pnlCny }
+        .minOrNull()
+        ?.abs()
+        ?: BigDecimal.ZERO
+    val totalAbs = sorted.mapNotNull { it.pnlCny?.abs() }
         .fold(BigDecimal.ZERO) { acc, value -> acc.add(value) }
+    val combined = maxGain.add(maxLoss)
+    val zeroFraction = if (combined.signum() > 0) {
+        maxLoss.divide(combined, 10, java.math.RoundingMode.HALF_UP).toFloat()
+    } else {
+        0.5f
+    }
 
     WhiteBlock {
-        rows.forEachIndexed { index, row ->
+        sorted.forEachIndexed { index, row ->
             if (index > 0) {
                 HorizontalDivider(modifier = Modifier.padding(start = 16.dp), color = FolioDivider)
             }
-            CategoryPnlRow(row, maxAbs, totalAbs)
+            CategoryPnlRow(row, maxGain, maxLoss, zeroFraction, totalAbs)
         }
     }
 }
@@ -889,16 +968,13 @@ private fun CategoryPnlBlock(rows: List<CategoryPnl>) {
 @Composable
 private fun CategoryPnlRow(
     pnl: CategoryPnl,
-    maxAbs: BigDecimal,
+    maxGain: BigDecimal,
+    maxLoss: BigDecimal,
+    zeroFraction: Float,
     totalAbs: BigDecimal,
 ) {
     val value = pnl.pnlCny
     val color = pnlColor(value)
-    val fraction = if (value != null && maxAbs.signum() > 0) {
-        value.abs().toFloat() / maxAbs.toFloat()
-    } else {
-        0f
-    }
     val share = if (value != null && totalAbs.signum() > 0) {
         value.abs().divide(totalAbs, 6, java.math.RoundingMode.HALF_UP)
     } else {
@@ -943,18 +1019,51 @@ private fun CategoryPnlRow(
                 }
             }
             Spacer(modifier = Modifier.height(6.dp))
-            Box(
+            Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(5.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(Color(0xFFF1F1F1)),
+                    .height(5.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                        .fillMaxHeight()
-                        .background(color),
+                val barHeight = size.height
+                val radius = CornerRadius(barHeight / 2f)
+                drawRoundRect(
+                    color = Color(0xFFF1F1F1),
+                    topLeft = Offset(0f, 0f),
+                    size = Size(size.width, barHeight),
+                    cornerRadius = radius,
+                )
+
+                val zeroX = size.width * zeroFraction
+                if (value != null) {
+                    if (value.signum() > 0 && maxGain.signum() > 0) {
+                        val barWidth = (value.toFloat() / maxGain.toFloat())
+                            .coerceIn(0f, 1f) * (size.width - zeroX)
+                        if (barWidth > 0f) {
+                            drawRoundRect(
+                                color = color,
+                                topLeft = Offset(zeroX, 0f),
+                                size = Size(barWidth, barHeight),
+                                cornerRadius = radius,
+                            )
+                        }
+                    } else if (value.signum() < 0 && maxLoss.signum() > 0) {
+                        val barWidth = (value.abs().toFloat() / maxLoss.toFloat())
+                            .coerceIn(0f, 1f) * zeroX
+                        if (barWidth > 0f) {
+                            drawRoundRect(
+                                color = color,
+                                topLeft = Offset(zeroX - barWidth, 0f),
+                                size = Size(barWidth, barHeight),
+                                cornerRadius = radius,
+                            )
+                        }
+                    }
+                }
+                drawLine(
+                    color = FolioMuted.copy(alpha = 0.45f),
+                    start = Offset(zeroX, -1.dp.toPx()),
+                    end = Offset(zeroX, barHeight + 1.dp.toPx()),
+                    strokeWidth = 1.dp.toPx(),
                 )
             }
             if (pnl.incomplete) {

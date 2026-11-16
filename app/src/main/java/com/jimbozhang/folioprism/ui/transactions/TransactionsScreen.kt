@@ -102,6 +102,7 @@ fun TransactionsScreen(
 ) {
     var showEditor by remember { mutableStateOf(false) }
     var editingEvent by remember { mutableStateOf<Event?>(null) }
+    var viewingEvent by remember { mutableStateOf<Event?>(null) }
     var typeFilter by remember { mutableStateOf<String?>(null) }
     val categoryNames = remember(data.settings.categories) {
         data.settings.categories.associate { it.id to it.name }
@@ -198,14 +199,24 @@ fun TransactionsScreen(
                         day = day,
                         data = data,
                         categoryNames = categoryNames,
-                        onEdit = { event ->
-                            editingEvent = event
-                            showEditor = true
-                        },
+                        onView = { event -> viewingEvent = event },
                     )
                 }
             }
         }
+
+    viewingEvent?.let { event ->
+        EventDetailDialog(
+            data = data,
+            event = event,
+            onDismiss = { viewingEvent = null },
+            onEdit = {
+                viewingEvent = null
+                editingEvent = event
+                showEditor = true
+            },
+        )
+    }
 
     if (showEditor) {
         EventEditorDialog(
@@ -244,7 +255,7 @@ private fun DayGroup(
     day: EventDay,
     data: PortfolioData,
     categoryNames: Map<String, String>,
-    onEdit: (Event) -> Unit,
+    onView: (Event) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -281,7 +292,7 @@ private fun DayGroup(
                         event = event,
                         data = data,
                         categoryNames = categoryNames,
-                        onClick = { onEdit(event) },
+                        onClick = { onView(event) },
                     )
                 }
             }
@@ -372,7 +383,7 @@ private fun EventRow(
     }
 }
 
-private fun eventIcon(event: Event): ImageVector = when (event) {
+internal fun eventIcon(event: Event): ImageVector = when (event) {
     is TransferEvent -> Icons.Outlined.SwapHoriz
     is IncomeEvent -> Icons.Outlined.Payments
     is ExternalEvent -> Icons.Outlined.AccountBalanceWallet
@@ -381,7 +392,7 @@ private fun eventIcon(event: Event): ImageVector = when (event) {
     is AdjustmentEvent -> Icons.Outlined.Tune
 }
 
-private fun eventAccent(event: Event): Color = when (event) {
+internal fun eventAccent(event: Event): Color = when (event) {
     is TransferEvent -> FolioGold
     is IncomeEvent -> FolioCoral
     is ExternalEvent -> FolioBlue
@@ -399,7 +410,7 @@ private fun Event.filterKey(): String = when (this) {
     is AdjustmentEvent -> "adjustment"
 }
 
-private fun eventTypeLabel(event: Event): String = when (event) {
+internal fun eventTypeLabel(event: Event): String = when (event) {
     is TransferEvent -> "转账"
     is IncomeEvent -> if (event.kind == IncomeKind.DIVIDEND) "分红" else "利息"
     is ExternalEvent -> if (event.direction == ExternalDirection.IN) "外部入金" else "外部出金"
@@ -434,7 +445,7 @@ private fun eventSubtitle(
     is AdjustmentEvent -> "${shortPosition(data, event.position)} · ${event.reason}"
 }
 
-private fun eventAmount(data: PortfolioData, event: Event): String = when (event) {
+internal fun eventAmount(data: PortfolioData, event: Event): String = when (event) {
     is TransferEvent -> {
         val instrument = data.instrument(event.to.instrumentId)
         when {
@@ -518,7 +529,7 @@ private fun dayLabel(date: LocalDate): String {
     return "$base · $weekday"
 }
 
-private fun shortPosition(data: PortfolioData, ref: PositionRef): String {
+internal fun shortPosition(data: PortfolioData, ref: PositionRef): String {
     val institution = data.institutions.firstOrNull { it.id == ref.institutionId }?.name
         ?: ref.institutionId
     val instrument = data.instrument(ref.instrumentId)
@@ -526,10 +537,10 @@ private fun shortPosition(data: PortfolioData, ref: PositionRef): String {
     return "$institution $code"
 }
 
-private fun signedNative(value: BigDecimal, currency: String): String =
+internal fun signedNative(value: BigDecimal, currency: String): String =
     (if (value.signum() < 0) "-" else "+") + formatNative(value.abs(), currency)
 
-private fun signedQuantity(value: BigDecimal, unit: String): String =
+internal fun signedQuantity(value: BigDecimal, unit: String): String =
     (if (value.signum() < 0) "-" else "+") + formatQuantity(value.abs()) + " " + unit
 
 private fun linkedIdsToRemove(data: PortfolioData, event: Event): Set<String> {
