@@ -526,7 +526,7 @@ private fun ChartRangeBar(
             RangeArrowButton(
                 icon = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                 contentDescription = "下一区间",
-                enabled = range.to.isBefore(today),
+                enabled = range.canShiftForward(today),
                 onClick = { onShift(range.shiftForward(today)) },
             )
         }
@@ -549,6 +549,7 @@ private fun LazyListScope.assetsContent(
         }
 
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
+        historyState is HistoryUiState.Loading -> item { LoadingBlock(historyState.message) }
         else -> item { LoadingBlock() }
     }
     item { CategoryTable(snapshot) }
@@ -585,6 +586,7 @@ private fun LazyListScope.categoryAssetsContent(
         }
 
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
+        historyState is HistoryUiState.Loading -> item { LoadingBlock(historyState.message) }
         else -> item { LoadingBlock() }
     }
     item {
@@ -663,6 +665,7 @@ private fun LazyListScope.categoryPnlContent(
         }
 
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
+        historyState is HistoryUiState.Loading -> item { LoadingBlock(historyState.message) }
         else -> item { LoadingBlock() }
     }
 }
@@ -1323,7 +1326,7 @@ private fun SummaryLine(label: String, value: String, emphasize: Boolean = false
 }
 
 @Composable
-private fun LoadingBlock() {
+private fun LoadingBlock(message: String? = null) {
     WhiteBlock {
         Row(
             modifier = Modifier
@@ -1337,8 +1340,10 @@ private fun LoadingBlock() {
                 strokeWidth = 2.dp,
                 color = FolioGold,
             )
-            Spacer(modifier = Modifier.width(10.dp))
-            Text("正在获取历史行情…", style = MaterialTheme.typography.bodyMedium, color = FolioMuted)
+            if (message != null) {
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(message, style = MaterialTheme.typography.bodyMedium, color = FolioMuted)
+            }
         }
     }
 }

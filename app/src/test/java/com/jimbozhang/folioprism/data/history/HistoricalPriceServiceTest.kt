@@ -11,11 +11,15 @@ import com.jimbozhang.folioprism.domain.opening
 import com.jimbozhang.folioprism.domain.portfolio
 import com.jimbozhang.folioprism.domain.quotedInstrument
 import com.jimbozhang.folioprism.domain.ref
+import com.jimbozhang.folioprism.domain.history.DateRange
 import com.jimbozhang.folioprism.domain.model.CategoryIds
 import com.jimbozhang.folioprism.domain.money.bd
+import java.io.File
 import java.nio.file.Files
 import java.time.LocalDate
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -98,6 +102,192 @@ class HistoricalPriceServiceTest {
         )
         assertTrue(second.logs.any { it.contains("history cached: 008163") })
         assertTrue(fetcher.requestCount == requestsAfterFirstFetch)
+
+        dir.deleteRecursively()
+        Unit
+    }
+
+    /**
+     * Reproduces the chart range arrows: load [from, to], step back one
+     * whole month (shiftBack, fetches genuinely new data), then step forward
+     * one month again (shiftForward lands on the full month after, which the
+     * cache now covers) and verify that window is served from cache with no
+     * new requests.
+     */
+    @Test
+    fun shiftBackThenShiftForwardServedFromCache() = runBlocking {
+        val data = portfolio(
+            instruments = listOf(
+                quotedInstrument("etf", CategoryIds.US_EQUITY, code = "513500"),
+            ),
+            events = listOf(
+                opening(ref(INST_A, "etf"), quantity = "10", date = "2025-06-01T00:00:00+08:00"),
+            ),
+        )
+        // Answer any tencent kline request with a close for every calendar day
+        // in the requested range.
+        val fetcher = FakeFetcher { url ->
+            val match = Regex("day,([^,]+),([^,]+),").find(url) ?: return@FakeFetcher null
+            val from = LocalDate.parse(match.groupValues[1])
+            val to = LocalDate.parse(match.groupValues[2])
+            val rows = generateSequence(from) { it.plusDays(1) }
+                .takeWhile { !it.isAfter(to) }
+                .joinToString(",") { day ->
+                    "[\"${day}\",\"1.0\",\"${day.dayOfMonth}.5\",\"1.0\",\"1.0\",\"1\"]"
+                }
+            """{"data":{"sh513500":{"qfqday":[$rows]}}}"""
+        }
+        val dir = Files.createTempDirectory("history-cache-arrows").toFile()
+        val repo = PriceCacheRepository(File(dir, "price-cache.json"))
+        val service = HistoricalPriceService(fetcher, repo, now = { "now" })
+
+        val today = LocalDate.of(2026, 1, 31)
+        val range = DateRange(LocalDate.of(2026, 1, 2), today)
+        val first = service.fetchAndCache(data, range.from, range.to)
+        assertTrue(first.logs.any { it.contains("history ok: 513500") })
+        val afterFirst = fetcher.requestCount
+
+        val shifted = range.shiftBack()
+        service.fetchAndCache(data, shifted.from, shifted.to)
+        val afterShifted = fetcher.requestCount
+
+        val restored = shifted.shiftForward(today)
+        assertEquals(DateRange(LocalDate.of(2026, 1, 1), today), restored)
+        val third = service.fetchAndCache(data, restored.from, restored.to)
+
+        assertTrue(third.logs.any { it.contains("history cached: 513500") })
+        assertEquals(afterShifted, fetcher.requestCount)
+
+        dir.deleteRecursively()
+        Unit
+    }
+
+    /**
+     * A failed fetch must back off: a second load inside the window issues no
+     * new request; after the window elapses it retries; and a successful fetch
+     * clears the backoff entry, so the next uncovered range retries right away
+     * even though a stale failure would still be inside the window.
+     */
+    @Test
+    fun failedFetchBacksOffUntilWindowElapses() = runBlocking {
+        val data = portfolio(
+            instruments = listOf(
+                quotedInstrument("etf", CategoryIds.US_EQUITY, code = "513500"),
+            ),
+            events = listOf(
+                opening(ref(INST_A, "etf"), quantity = "10", date = "2025-06-01T00:00:00+08:00"),
+            ),
+        )
+        var respond = false
+        val fetcher = FakeFetcher { url ->
+            if (!respond) return@FakeFetcher null
+            val match = Regex("day,([^,]+),([^,]+),").find(url) ?: return@FakeFetcher null
+            val from = LocalDate.parse(match.groupValues[1])
+            val to = LocalDate.parse(match.groupValues[2])
+            val rows = generateSequence(from) { it.plusDays(1) }
+                .takeWhile { !it.isAfter(to) }
+                .joinToString(",") { day ->
+                    "[\"${day}\",\"1.0\",\"${day.dayOfMonth}.5\",\"1.0\",\"1.0\",\"1\"]"
+                }
+            """{"data":{"sh513500":{"qfqday":[$rows]}}}"""
+        }
+        val dir = Files.createTempDirectory("history-cache-backoff").toFile()
+        val repo = PriceCacheRepository(File(dir, "price-cache.json"))
+        var nowMs = 0L
+        val service = HistoricalPriceService(
+            fetcher,
+            repo,
+            retryCount = 0,
+            now = { "now" },
+            failureBackoffMs = 60_000L,
+            clockMs = { nowMs },
+        )
+        val from = LocalDate.of(2026, 1, 2)
+        val to = LocalDate.of(2026, 1, 31)
+
+        // A failed tencent fetch tries two URL variants, so it costs 2 requests.
+        val first = service.fetchAndCache(data, from, to)
+        assertTrue(first.logs.any { it.contains("history failed: 513500") })
+        assertEquals(2, fetcher.requestCount)
+
+        // Inside the backoff window: no new request is made.
+        val second = service.fetchAndCache(data, from, to)
+        assertTrue(second.logs.any { it.contains("history backoff: 513500") })
+        assertEquals(2, fetcher.requestCount)
+
+        // After the window elapses: it retries and fails again.
+        nowMs += 60_000L
+        val third = service.fetchAndCache(data, from, to)
+        assertTrue(third.logs.any { it.contains("history failed: 513500") })
+        assertEquals(4, fetcher.requestCount)
+
+        // A successful fetch clears the backoff entry.
+        respond = true
+        nowMs += 60_000L
+        val fourth = service.fetchAndCache(data, from, to)
+        assertTrue(fourth.logs.any { it.contains("history ok: 513500") })
+        assertEquals(5, fetcher.requestCount)
+
+        // Step the fake clock back 1s so the failure from `third` would still
+        // be inside the window if it had not been cleared by the success. A new,
+        // uncovered range is then retried immediately instead of being skipped.
+        respond = false
+        nowMs -= 1_000L
+        val fifth = service.fetchAndCache(
+            data,
+            LocalDate.of(2025, 12, 1),
+            LocalDate.of(2025, 12, 31),
+        )
+        assertTrue(fifth.logs.any { it.contains("history failed: 513500") })
+        assertEquals(7, fetcher.requestCount)
+
+        dir.deleteRecursively()
+        Unit
+    }
+
+    /**
+     * [HistoricalPriceService.needsNetwork] drives the truthful loading message:
+     * true only while some held instrument is uncovered AND not in backoff.
+     */
+    @Test
+    fun needsNetworkReflectsCacheAndBackoff() = runBlocking {
+        val data = portfolio(
+            instruments = listOf(
+                quotedInstrument("etf", CategoryIds.US_EQUITY, code = "513500"),
+            ),
+            events = listOf(
+                opening(ref(INST_A, "etf"), quantity = "10", date = "2025-06-01T00:00:00+08:00"),
+            ),
+        )
+        val fetcher = FakeFetcher { null }
+        val dir = Files.createTempDirectory("history-cache-needs-network").toFile()
+        val repo = PriceCacheRepository(File(dir, "price-cache.json"))
+        var nowMs = 0L
+        val service = HistoricalPriceService(
+            fetcher,
+            repo,
+            retryCount = 0,
+            now = { "now" },
+            failureBackoffMs = 60_000L,
+            clockMs = { nowMs },
+        )
+        val from = LocalDate.of(2026, 1, 2)
+        val to = LocalDate.of(2026, 1, 31)
+        val earlierFrom = LocalDate.of(2025, 12, 1)
+        val earlierTo = LocalDate.of(2025, 12, 31)
+
+        // Nothing cached yet: the load needs the network.
+        assertTrue(service.needsNetwork(data, from, to))
+
+        // The fetch fails, putting the instrument in backoff: even a range the
+        // cache does not cover must not hit the network while backoffed.
+        service.fetchAndCache(data, from, to)
+        assertFalse(service.needsNetwork(data, from, to))
+        assertFalse(service.needsNetwork(data, earlierFrom, earlierTo))
+
+        // After the backoff window: the uncovered range needs the network again.
+        nowMs += 60_000L
+        assertTrue(service.needsNetwork(data, earlierFrom, earlierTo))
 
         dir.deleteRecursively()
         Unit

@@ -15,6 +15,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -34,10 +35,18 @@ class HistoricalPriceService(
     private val cacheRepository: PriceCacheRepository,
     private val retryCount: Int = 1,
     private val now: () -> String = { OffsetDateTime.now().toString() },
+    // How long to refrain from retrying an instrument after a failed fetch, so
+    // a failing/rate-limited source isn't hammered on every range change.
+    private val failureBackoffMs: Long = 60_000L,
+    private val clockMs: () -> Long = { System.currentTimeMillis() },
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val chinaZone = ZoneId.of("Asia/Shanghai")
     private var memoryCache: PriceCacheData? = null
+    // InstrumentId -> wall-clock millis of its last failed fetch. Backs the
+    // negative cache: a recently failed instrument is not retried within the
+    // backoff window. Kept in memory only; a fresh session retries freely.
+    private val lastFailedAt = linkedMapOf<String, Long>()
     private val sixDigits = Regex("^\\d{6}$")
     private val onExchange = Regex("^[15]\\d{5}$")
     private val usTicker = Regex("^[A-Z]{2,5}$")
@@ -52,12 +61,7 @@ class HistoricalPriceService(
         var cacheChanged = false
         val fetchFrom = from.minusDays(10)
 
-        val instrumentIds = data.events
-            .filter { !it.localDate().isAfter(to) }
-            .flatMap { it.positionRefs() }
-            .map { it.instrumentId }
-            .toSet()
-        val instruments = instrumentIds.mapNotNull { data.instrument(it) }
+        val instruments = instrumentsPresentIn(data, to)
 
         instruments.forEach { instrument ->
             val source = route(instrument)
@@ -81,14 +85,27 @@ class HistoricalPriceService(
                 return@forEach
             }
 
-            val result = runCatching {
-                when (source) {
-                    HistorySource.FUND -> fetchFundHistory(instrument, fetchFrom, to)
-                    HistorySource.TENCENT -> fetchTencentHistory(instrument, fetchFrom, to)
-                    HistorySource.US_SINA -> fetchSinaUsHistory(instrument, fetchFrom, to)
-                    HistorySource.GOLD_SINA -> fetchSinaGoldHistory(fetchFrom, to)
-                    else -> error("unexpected history source: $source")
-                }
+            if (inBackoff(instrument.id)) {
+                logs += "history backoff: ${instrument.code}"
+                return@forEach
+            }
+
+            val result = try {
+                Result.success(
+                    when (source) {
+                        HistorySource.FUND -> fetchFundHistory(instrument, fetchFrom, to)
+                        HistorySource.TENCENT -> fetchTencentHistory(instrument, fetchFrom, to)
+                        HistorySource.US_SINA -> fetchSinaUsHistory(instrument, fetchFrom, to)
+                        HistorySource.GOLD_SINA -> fetchSinaGoldHistory(fetchFrom, to)
+                        else -> error("unexpected history source: $source")
+                    },
+                )
+            } catch (e: CancellationException) {
+                // A superseded load was cancelled; stop fetching instead of
+                // iterating the remaining instruments.
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
             }
             result.onSuccess { series ->
                 cache = cacheRepository.mergeSeries(
@@ -99,8 +116,12 @@ class HistoricalPriceService(
                     fetchedAt = now(),
                 )
                 cacheChanged = true
+                lastFailedAt.remove(instrument.id)
                 logs += "history ok: ${instrument.code} (${series.source})"
             }.onFailure {
+                // A real (non-cancellation) failure: back off retries for this
+                // instrument so a failing source isn't hammered.
+                lastFailedAt[instrument.id] = clockMs()
                 logs += "history failed: ${instrument.code}: ${it.message}"
             }
         }
@@ -129,6 +150,50 @@ class HistoricalPriceService(
         val hasStart = dates.any { !it.isBefore(from.minusDays(30)) && !it.isAfter(from) }
         val hasEnd = dates.any { !it.isBefore(to.minusDays(15)) }
         return hasStart && hasEnd
+    }
+
+    /**
+     * Instruments referenced by events on or before [to] that the portfolio
+     * holds, in stable order.
+     */
+    private fun instrumentsPresentIn(data: PortfolioData, to: LocalDate): List<Instrument> {
+        val instrumentIds = data.events
+            .filter { !it.localDate().isAfter(to) }
+            .flatMap { it.positionRefs() }
+            .map { it.instrumentId }
+            .toSet()
+        return instrumentIds.mapNotNull { data.instrument(it) }
+    }
+
+    /**
+     * True when [instrumentId] failed a recent fetch and is still inside the
+     * backoff window, so it should not be retried yet.
+     */
+    private fun inBackoff(instrumentId: String): Boolean {
+        val failedAt = lastFailedAt[instrumentId] ?: return false
+        return clockMs() - failedAt < failureBackoffMs
+    }
+
+    /**
+     * Whether loading [from, to] for [data] would issue any network request:
+     * some held instrument is neither covered by the cache nor in backoff.
+     * Used to pick a truthful status message (fetching vs. just computing).
+     */
+    suspend fun needsNetwork(
+        data: PortfolioData,
+        from: LocalDate,
+        to: LocalDate,
+    ): Boolean {
+        val cache = memoryCache ?: cacheRepository.load().also { memoryCache = it }
+        return instrumentsPresentIn(data, to).any { instrument ->
+            route(instrument) !in setOf(
+                HistorySource.CASH,
+                HistorySource.MANUAL,
+                HistorySource.UNKNOWN,
+            ) &&
+                !isCovered(cache.quotes[instrument.id], from, to) &&
+                !inBackoff(instrument.id)
+        }
     }
 
     private fun route(instrument: Instrument): HistorySource = when {
