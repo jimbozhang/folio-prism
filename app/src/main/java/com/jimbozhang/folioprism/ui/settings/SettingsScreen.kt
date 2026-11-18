@@ -4,12 +4,14 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.outlined.AccountBalance
@@ -19,14 +21,21 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.jimbozhang.folioprism.data.web.WebDataUiState
+import com.jimbozhang.folioprism.data.web.WebDataService
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.platform.storage.StoragePaths
 import com.jimbozhang.folioprism.ui.theme.FolioBlue
@@ -123,6 +132,10 @@ fun SettingsScreen(
         }
 
         item {
+            WebDataCard()
+        }
+
+        item {
             SettingsCard("管理") {
                 ManagementLinkRow(
                     icon = Icons.Outlined.AccountBalance,
@@ -173,6 +186,66 @@ private fun SettingsCard(
             Text(text = title, style = MaterialTheme.typography.titleSmall)
             Spacer(modifier = Modifier.height(4.dp))
             content()
+        }
+    }
+}
+
+@Composable
+private fun WebDataCard() {
+    val context = LocalContext.current
+    val webState = WebDataService.state.collectAsState().value
+    val active = webState is WebDataUiState.Running || webState is WebDataUiState.Starting
+    SettingsCard("局域网数据服务") {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "在电脑浏览器中查看图表、编辑流水",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = "手机与电脑需在同一局域网",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = active,
+                onCheckedChange = { on ->
+                    if (on) WebDataService.start(context) else WebDataService.stop(context)
+                },
+            )
+        }
+        if (active) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "服务运行期间请勿在手机端编辑数据；网页端的修改需重启 app 后才能在手机上显示。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        when (val s = webState) {
+            is WebDataUiState.Running -> {
+                Spacer(modifier = Modifier.height(8.dp))
+                SelectionContainer {
+                    Text(
+                        text = s.url,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+            }
+            is WebDataUiState.Failed -> {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = s.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            else -> Unit
         }
     }
 }

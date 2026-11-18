@@ -1,0 +1,182 @@
+package com.jimbozhang.folioprism.data.web
+
+import java.math.BigDecimal
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+/**
+ * Wire format for the LAN web UI. All decimal values travel as strings so the
+ * browser never introduces floating-point drift into money values; the UI
+ * converts to numbers only for drawing.
+ */
+val WEB_JSON = Json {
+    encodeDefaults = true
+    prettyPrint = false
+}
+
+internal fun BigDecimal.plain(): String = toPlainString()
+
+internal fun BigDecimal?.plainOrNull(): String? = this?.toPlainString()
+
+@Serializable
+data class ErrorDto(val error: String)
+
+@Serializable
+data class VersionDto(val version: String)
+
+@Serializable
+data class CountsDto(
+    val institutions: Int,
+    val instruments: Int,
+    val events: Int,
+)
+
+@Serializable
+data class QuoteFailureDto(
+    val instrumentId: String? = null,
+    val code: String? = null,
+    val name: String? = null,
+    val kind: String,
+    val source: String,
+    val message: String,
+)
+
+@Serializable
+data class QuoteStatusDto(
+    val fetchedAt: String? = null,
+    val failures: List<QuoteFailureDto> = emptyList(),
+)
+
+@Serializable
+data class CategoryViewDto(
+    val id: String,
+    val name: String,
+    val color: String,
+    val order: Int,
+    val specialRule: String? = null,
+    val valueCny: String,
+    /** Fraction, e.g. "0.32". */
+    val share: String,
+    /** Percent points, e.g. "32.0". */
+    val targetPct: String,
+    val minPct: String,
+    val maxPct: String,
+    val inRange: Boolean,
+    val incomplete: Boolean,
+    val targetValueCny: String? = null,
+    val minValueCny: String? = null,
+    val maxValueCny: String? = null,
+    val gapToTargetCny: String? = null,
+    val gapToMinCny: String? = null,
+    val gapToMaxCny: String? = null,
+    /** Fractions against total assets, used to draw the allocation bar. */
+    val visualShare: String,
+    val visualTarget: String,
+    val visualMin: String,
+    val visualMax: String,
+    val goldMinPriceCnyPerGram: String? = null,
+    val goldMaxPriceCnyPerGram: String? = null,
+)
+
+@Serializable
+data class PositionViewDto(
+    val institutionId: String,
+    val institutionName: String,
+    val instrumentId: String,
+    val instrumentCode: String,
+    val instrumentName: String,
+    val categoryId: String,
+    /** "cash" or "quoted". */
+    val kind: String,
+    val currency: String,
+    val unit: String,
+    val quantity: String,
+    val price: String? = null,
+    val valueCny: String? = null,
+    val incomplete: Boolean,
+)
+
+@Serializable
+data class DistributionDto(
+    val id: String,
+    val name: String,
+    val valueCny: String,
+    val share: String,
+)
+
+@Serializable
+data class OverviewDto(
+    val version: String,
+    val updatedAt: String,
+    val asOf: String,
+    val counts: CountsDto,
+    val totalValueCny: String,
+    val dividendValueCny: String,
+    val dividendShare: String,
+    val portfolioValueCny: String,
+    val portfolioShare: String,
+    val hasMissingPrices: Boolean,
+    val categories: List<CategoryViewDto>,
+    val positions: List<PositionViewDto>,
+    val institutions: List<DistributionDto>,
+    val currencies: List<DistributionDto>,
+    val quote: QuoteStatusDto,
+)
+
+@Serializable
+data class ChartPointDto(
+    val date: String,
+    val value: String? = null,
+    val incomplete: Boolean = false,
+)
+
+@Serializable
+data class ChartSummaryDto(
+    val startValue: String? = null,
+    val endValue: String? = null,
+    val totalPnl: String? = null,
+)
+
+@Serializable
+data class CategoryRefDto(val id: String, val name: String, val color: String)
+
+@Serializable
+data class CategoryPnlDto(
+    val id: String,
+    val name: String,
+    val color: String,
+    val pnlCny: String? = null,
+    val incomplete: Boolean,
+)
+
+@Serializable
+data class ChartDto(
+    val type: String,
+    val from: String,
+    val to: String,
+    val points: List<ChartPointDto> = emptyList(),
+    val summary: ChartSummaryDto? = null,
+    val category: CategoryRefDto? = null,
+    val categoryPnl: List<CategoryPnlDto> = emptyList(),
+    val logs: List<String> = emptyList(),
+)
+
+@Serializable
+data class FlowMonthDto(
+    val month: String,
+    val inflowCny: String,
+    val outflowCny: String,
+)
+
+@Serializable
+data class FlowsDto(val months: List<FlowMonthDto>)
+
+@Serializable
+data class ExpenseMonthDto(
+    val month: String,
+    val totalCny: String,
+    val byCategory: Map<String, String>,
+)
+
+@Serializable
+data class ExpensesDto(val months: List<ExpenseMonthDto>)
