@@ -64,6 +64,9 @@ data class DateRange(
 
         fun yearToDate(today: LocalDate): DateRange =
             preset(RangePreset.YEAR_TO_DATE, today, earliest = null)
+
+        fun monthToDate(today: LocalDate): DateRange =
+            preset(RangePreset.MONTH_TO_DATE, today, earliest = null)
     }
 }
 
@@ -71,7 +74,7 @@ enum class RangePreset(val label: String) {
     MONTH_TO_DATE("月初至今"),
     ONE_MONTH("近 1 月"),
     THREE_MONTHS("近 3 月"),
-    YEAR_TO_DATE("今年至今"),
+    YEAR_TO_DATE("年初至今"),
     ONE_YEAR("近 1 年"),
     ALL("全部"),
 }

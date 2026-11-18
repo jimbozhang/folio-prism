@@ -112,11 +112,22 @@ private enum class ChartType(
     ASSETS("总资产", Icons.AutoMirrored.Outlined.ShowChart, needsHistory = true, usesRange = true),
     CATEGORY_ASSETS("类别资产", Icons.Outlined.StackedLineChart, needsHistory = true, usesRange = true),
     CATEGORY_PNL("类别盈亏", Icons.Outlined.PieChart, needsHistory = true, usesRange = true),
-    FLOWS("累计投入取出", Icons.Outlined.Savings, needsHistory = false, usesRange = true),
+    FLOWS("投入取出", Icons.Outlined.Savings, needsHistory = false, usesRange = true),
     EXPENSES("费用统计", Icons.AutoMirrored.Outlined.ReceiptLong, needsHistory = false, usesRange = true),
     INSTITUTIONS("机构分布", Icons.Outlined.AccountBalance, needsHistory = false, usesRange = false),
     CURRENCIES("币种分布", Icons.Outlined.CurrencyExchange, needsHistory = false, usesRange = false),
 }
+
+/**
+ * The range a chart opens with: category P&L starts from the first day of
+ * the current month, all other charts from the first day of the current year.
+ */
+private fun ChartType.defaultRange(today: LocalDate): DateRange =
+    if (this == ChartType.CATEGORY_PNL) {
+        DateRange.monthToDate(today)
+    } else {
+        DateRange.yearToDate(today)
+    }
 
 private data class MonthFlow(
     val month: YearMonth,
@@ -164,9 +175,9 @@ fun ChartsScreen(
         data.events.minOfOrNull { it.localDate() }
     }
 
-    var chart by rememberSaveable { mutableStateOf(ChartType.ASSETS) }
+    var chart by rememberSaveable { mutableStateOf(ChartType.CATEGORY_PNL) }
     var range by rememberSaveable(stateSaver = dateRangeSaver) {
-        mutableStateOf(DateRange.yearToDate(today))
+        mutableStateOf(chart.defaultRange(today))
     }
     var showRangePicker by remember { mutableStateOf(false) }
     val orderedCategories = remember(data.settings.categories) {
@@ -226,7 +237,16 @@ fun ChartsScreen(
         ChartHeader(
             chart = chart,
             contentPadding = contentPadding,
-            onSelected = { chart = it },
+            onSelected = { selected ->
+                // Each chart carries its own default range. When the current
+                // range is still the open chart's default (i.e. the user has
+                // not customized it), adopt the selected chart's default;
+                // otherwise keep the user's choice.
+                if (range == chart.defaultRange(today)) {
+                    range = selected.defaultRange(today)
+                }
+                chart = selected
+            },
         )
         if (chart == ChartType.CATEGORY_ASSETS && selectedCategory != null) {
             CategorySelector(
