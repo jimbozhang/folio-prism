@@ -16,6 +16,10 @@ class HistoricalPriceProvider(
     private val cache: PriceCacheData,
     private val currentFxRates: Map<String, BigDecimal> = emptyMap(),
     private val eventPrices: Map<String, List<PricePoint>> = emptyMap(),
+    /** Live prices (native currency) that override the cache at [currentAsOf]. */
+    private val currentPrices: Map<String, BigDecimal> = emptyMap(),
+    /** The single date for which [currentPrices] apply, or null. */
+    private val currentAsOf: LocalDate? = null,
 ) : PriceProvider {
 
     /** True when at least one date had no online/cache price and used interpolation. */
@@ -23,6 +27,11 @@ class HistoricalPriceProvider(
         private set
 
     override fun price(instrumentId: String, date: LocalDate): BigDecimal? {
+        // On the "now" date, prefer the live quote so the curve end matches
+        // the home screen; the cache holds the last daily close.
+        if (date == currentAsOf) {
+            currentPrices[instrumentId]?.let { return it }
+        }
         lookup(cache.quotes[instrumentId], date)?.let { return it }
         return interpolate(eventPrices[instrumentId], date)?.also {
             usedInterpolation = true

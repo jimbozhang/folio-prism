@@ -2,7 +2,9 @@ package com.jimbozhang.folioprism.domain.history
 
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DateRangeTest {
@@ -52,21 +54,40 @@ class DateRangeTest {
     }
 
     @Test
-    fun shiftBackKeepsLength() {
-        val range = DateRange(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 31))
+    fun shiftBackStepsToPreviousWholeMonth() {
+        val range = DateRange(LocalDate.of(2026, 2, 13), LocalDate.of(2026, 6, 18))
         val shifted = range.shiftBack()
-        assertEquals(LocalDate.of(2025, 12, 1), shifted.from)
-        assertEquals(LocalDate.of(2025, 12, 31), shifted.to)
-        assertEquals(range.days, shifted.days)
+        assertEquals(LocalDate.of(2026, 1, 1), shifted.from)
+        assertEquals(LocalDate.of(2026, 1, 31), shifted.to)
+
+        val currentMonth = DateRange(LocalDate.of(2026, 11, 1), LocalDate.of(2026, 11, 18))
+        val back = currentMonth.shiftBack()
+        assertEquals(LocalDate.of(2026, 10, 1), back.from)
+        assertEquals(LocalDate.of(2026, 10, 31), back.to)
     }
 
     @Test
-    fun shiftForwardStopsAtToday() {
-        val range = DateRange(LocalDate.of(2026, 10, 20), LocalDate.of(2026, 11, 1))
+    fun shiftForwardStepsToNextWholeMonth() {
+        val range = DateRange(LocalDate.of(2026, 2, 13), LocalDate.of(2026, 6, 18))
         val shifted = range.shiftForward(today)
-        assertEquals(LocalDate.of(2026, 10, 31), shifted.from)
+        assertEquals(LocalDate.of(2026, 7, 1), shifted.from)
+        assertEquals(LocalDate.of(2026, 7, 31), shifted.to)
+    }
+
+    @Test
+    fun shiftForwardClampsCurrentMonthToToday() {
+        val range = DateRange(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31))
+        val shifted = range.shiftForward(today)
+        assertEquals(LocalDate.of(2026, 11, 1), shifted.from)
         assertEquals(today, shifted.to)
-        assertEquals(range, range.shiftForward(range.to))
+    }
+
+    @Test
+    fun shiftForwardDisabledInCurrentMonth() {
+        val range = DateRange(LocalDate.of(2026, 11, 1), LocalDate.of(2026, 11, 18))
+        assertEquals(range, range.shiftForward(today))
+        assertFalse(range.canShiftForward(today))
+        assertTrue(range.shiftBack().canShiftForward(today))
     }
 
     @Test

@@ -16,15 +16,34 @@ data class DateRange(
 
     val days: Long = ChronoUnit.DAYS.between(from, to) + 1
 
-    fun shiftBack(): DateRange =
-        DateRange(from.minusDays(days), to.minusDays(days))
-
-    /** Shifts forward without crossing [today]; returns the same range at the boundary. */
-    fun shiftForward(today: LocalDate): DateRange {
-        if (!to.isBefore(today)) return this
-        val shift = minOf(days, ChronoUnit.DAYS.between(to, today))
-        return DateRange(from.plusDays(shift), to.plusDays(shift))
+    /**
+     * Steps back to the previous whole month: the result is the full month
+     * preceding [from]'s month, regardless of the current range length.
+     */
+    fun shiftBack(): DateRange {
+        val firstOfPrevious = from.withDayOfMonth(1).minusMonths(1)
+        return DateRange(
+            firstOfPrevious,
+            firstOfPrevious.withDayOfMonth(firstOfPrevious.lengthOfMonth()),
+        )
     }
+
+    /**
+     * Steps forward to the next whole month: the result is the full month
+     * following [to]'s month, clamped to [today] when that month is the
+     * current one. Returns the same range at the boundary (the range already
+     * ends in the current month or later).
+     */
+    fun shiftForward(today: LocalDate): DateRange {
+        val firstOfNext = to.withDayOfMonth(1).plusMonths(1)
+        if (firstOfNext.isAfter(today)) return this
+        val lastOfNext = firstOfNext.withDayOfMonth(firstOfNext.lengthOfMonth())
+        return DateRange(firstOfNext, minOf(lastOfNext, today))
+    }
+
+    /** Whether [shiftForward] would actually move the range. */
+    fun canShiftForward(today: LocalDate): Boolean =
+        to.withDayOfMonth(1).plusMonths(1) <= today
 
     fun label(): String =
         "${from.year}.${from.monthValue}.${from.dayOfMonth}" +
@@ -45,6 +64,9 @@ data class DateRange(
 
         fun yearToDate(today: LocalDate): DateRange =
             preset(RangePreset.YEAR_TO_DATE, today, earliest = null)
+
+        fun monthToDate(today: LocalDate): DateRange =
+            preset(RangePreset.MONTH_TO_DATE, today, earliest = null)
     }
 }
 
@@ -52,7 +74,7 @@ enum class RangePreset(val label: String) {
     MONTH_TO_DATE("月初至今"),
     ONE_MONTH("近 1 月"),
     THREE_MONTHS("近 3 月"),
-    YEAR_TO_DATE("今年至今"),
+    YEAR_TO_DATE("年初至今"),
     ONE_YEAR("近 1 年"),
     ALL("全部"),
 }

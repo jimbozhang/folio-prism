@@ -112,11 +112,22 @@ private enum class ChartType(
     ASSETS("总资产", Icons.AutoMirrored.Outlined.ShowChart, needsHistory = true, usesRange = true),
     CATEGORY_ASSETS("类别资产", Icons.Outlined.StackedLineChart, needsHistory = true, usesRange = true),
     CATEGORY_PNL("类别盈亏", Icons.Outlined.PieChart, needsHistory = true, usesRange = true),
-    FLOWS("累计投入取出", Icons.Outlined.Savings, needsHistory = false, usesRange = true),
+    FLOWS("投入取出", Icons.Outlined.Savings, needsHistory = false, usesRange = true),
     EXPENSES("费用统计", Icons.AutoMirrored.Outlined.ReceiptLong, needsHistory = false, usesRange = true),
     INSTITUTIONS("机构分布", Icons.Outlined.AccountBalance, needsHistory = false, usesRange = false),
     CURRENCIES("币种分布", Icons.Outlined.CurrencyExchange, needsHistory = false, usesRange = false),
 }
+
+/**
+ * The range a chart opens with: category P&L starts from the first day of
+ * the current month, all other charts from the first day of the current year.
+ */
+private fun ChartType.defaultRange(today: LocalDate): DateRange =
+    if (this == ChartType.CATEGORY_PNL) {
+        DateRange.monthToDate(today)
+    } else {
+        DateRange.yearToDate(today)
+    }
 
 private data class MonthFlow(
     val month: YearMonth,
@@ -164,9 +175,9 @@ fun ChartsScreen(
         data.events.minOfOrNull { it.localDate() }
     }
 
-    var chart by rememberSaveable { mutableStateOf(ChartType.ASSETS) }
+    var chart by rememberSaveable { mutableStateOf(ChartType.CATEGORY_PNL) }
     var range by rememberSaveable(stateSaver = dateRangeSaver) {
-        mutableStateOf(DateRange.yearToDate(today))
+        mutableStateOf(chart.defaultRange(today))
     }
     var showRangePicker by remember { mutableStateOf(false) }
     val orderedCategories = remember(data.settings.categories) {
@@ -189,12 +200,33 @@ fun ChartsScreen(
     }
     val currencyRows = remember(snapshot.currencyValues) { currencyRows(snapshot) }
 
+    val quotesFingerprint = remember(quotes) { quotesFingerprint(quotes) }
+    var historyQuotesFingerprint by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(chart, range, data.events.size) {
         if (!chart.needsHistory) return@LaunchedEffect
         val ready = historyState as? HistoryUiState.Ready
         if (ready == null || ready.result.from != range.from || ready.result.to != range.to) {
+            historyQuotesFingerprint = quotesFingerprint
             onLoadHistory(range.from, range.to)
         }
+    }
+
+    // After a quote refresh, if prices or FX rates changed since the displayed
+    // result was built, rebuild it for the same range so the chart reflects the
+    // new prices. No other setting (chart type, range, ...) is touched.
+    LaunchedEffect(quotesFingerprint, chart) {
+        if (quotesFingerprint == historyQuotesFingerprint) return@LaunchedEffect
+        if (!chart.needsHistory) return@LaunchedEffect
+        val ready = historyState as? HistoryUiState.Ready
+        if (ready == null ||
+            ready.result.from != range.from ||
+            ready.result.to != range.to
+        ) {
+            return@LaunchedEffect
+        }
+        historyQuotesFingerprint = quotesFingerprint
+        onLoadHistory(range.from, range.to)
     }
 
     Column(
@@ -205,7 +237,16 @@ fun ChartsScreen(
         ChartHeader(
             chart = chart,
             contentPadding = contentPadding,
-            onSelected = { chart = it },
+            onSelected = { selected ->
+                // Each chart carries its own default range. When the current
+                // range is still the open chart's default (i.e. the user has
+                // not customized it), adopt the selected chart's default;
+                // otherwise keep the user's choice.
+                if (range == chart.defaultRange(today)) {
+                    range = selected.defaultRange(today)
+                }
+                chart = selected
+            },
         )
         if (chart == ChartType.CATEGORY_ASSETS && selectedCategory != null) {
             CategorySelector(
@@ -505,7 +546,7 @@ private fun ChartRangeBar(
             RangeArrowButton(
                 icon = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                 contentDescription = "下一区间",
-                enabled = range.to.isBefore(today),
+                enabled = range.canShiftForward(today),
                 onClick = { onShift(range.shiftForward(today)) },
             )
         }
@@ -528,6 +569,7 @@ private fun LazyListScope.assetsContent(
         }
 
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
+        historyState is HistoryUiState.Loading -> item { LoadingBlock(historyState.message) }
         else -> item { LoadingBlock() }
     }
     item { CategoryTable(snapshot) }
@@ -564,6 +606,7 @@ private fun LazyListScope.categoryAssetsContent(
         }
 
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
+        historyState is HistoryUiState.Loading -> item { LoadingBlock(historyState.message) }
         else -> item { LoadingBlock() }
     }
     item {
@@ -642,6 +685,7 @@ private fun LazyListScope.categoryPnlContent(
         }
 
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
+        historyState is HistoryUiState.Loading -> item { LoadingBlock(historyState.message) }
         else -> item { LoadingBlock() }
     }
 }
@@ -1302,7 +1346,7 @@ private fun SummaryLine(label: String, value: String, emphasize: Boolean = false
 }
 
 @Composable
-private fun LoadingBlock() {
+private fun LoadingBlock(message: String? = null) {
     WhiteBlock {
         Row(
             modifier = Modifier
@@ -1316,8 +1360,10 @@ private fun LoadingBlock() {
                 strokeWidth = 2.dp,
                 color = FolioGold,
             )
-            Spacer(modifier = Modifier.width(10.dp))
-            Text("正在获取历史行情…", style = MaterialTheme.typography.bodyMedium, color = FolioMuted)
+            if (message != null) {
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(message, style = MaterialTheme.typography.bodyMedium, color = FolioMuted)
+            }
         }
     }
 }
@@ -1418,6 +1464,21 @@ private fun fxToCny(currency: String, fxRates: Map<String, BigDecimal>): BigDeci
         "CNY", "CNH" -> BigDecimal.ONE
         else -> fxRates[currency.uppercase()]
     }
+
+/**
+ * Fingerprint of the price information in the snapshot (instrument prices and
+ * FX rates). Used to detect whether a quote refresh actually changed a price,
+ * so that a refresh without changes does not rebuild the history result.
+ */
+private fun quotesFingerprint(quotes: QuoteSnapshot): String = buildString {
+    quotes.quotes.forEach { (instrumentId, quote) ->
+        append(instrumentId).append('=').append(quote.price).append(';')
+    }
+    append('|')
+    quotes.fxRates.forEach { (currency, rate) ->
+        append(currency).append('=').append(rate).append(';')
+    }
+}
 
 private fun monthlyFlows(
     data: PortfolioData,

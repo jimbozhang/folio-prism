@@ -527,7 +527,11 @@ private fun CategoryCard(
                             Text(
                                 text = offsetText(label, diff),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (diff.signum() == 0) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    statusColor
+                                },
                             )
                         }
                     }

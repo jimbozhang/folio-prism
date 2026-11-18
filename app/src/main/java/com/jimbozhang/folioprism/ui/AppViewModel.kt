@@ -22,10 +22,13 @@ import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -61,6 +64,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _historyState = MutableStateFlow<HistoryUiState>(HistoryUiState.Idle)
     val historyState: StateFlow<HistoryUiState> = _historyState.asStateFlow()
+
+    // The in-flight history load, if any. Superseded (cancelled) on each new
+    // range request so rapid range changes don't leave an orphaned network fetch
+    // running for a range the user has already left.
+    private var historyJob: Job? = null
 
     init {
         load()
@@ -112,30 +120,79 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadHistory(from: LocalDate, to: LocalDate) {
-        viewModelScope.launch {
-            val data = currentData() ?: return@launch
-            _historyState.value = HistoryUiState.Loading
-            val startedAt = System.currentTimeMillis()
-            val result = runCatching {
-                val fetched = historicalService.fetchAndCache(data, from, to)
+        val data = currentData() ?: return
+        // Cancel any in-flight load for a previous range. Without this, a rapid
+        // range change (e.g. left then right arrow) leaves the first load's
+        // network fetch running for a range the user already moved away from.
+        historyJob?.cancel()
+        historyJob = viewModelScope.launch {
+            try {
+                // Match the status to what will actually happen: if everything is
+                // already cached we are not "fetching" anything, so no wording is
+                // needed — the spinner alone is enough.
+                val fetching = historicalService.needsNetwork(data, from, to)
+                _historyState.value = HistoryUiState.Loading(
+                    if (fetching) MSG_FETCHING else null,
+                )
+                val startedAt = System.currentTimeMillis()
+                // Cache scan and build run off the main thread so a range switch
+                // never freezes the UI; the off-main window is also what lets the
+                // loading state actually get its own frame.
+                val fetched = withContext(Dispatchers.Default) {
+                    historicalService.fetchAndCache(data, from, to)
+                }
                 val fetchedAt = System.currentTimeMillis()
-                val currentFx = (_state.value as? AppUiState.Ready)
-                    ?.quotes?.fxRates
+                // The fetch is done: drop the "fetching" wording and keep only the
+                // spinner while the result is computed.
+                _historyState.value = HistoryUiState.Loading()
+                val quotes = (_state.value as? AppUiState.Ready)?.quotes
+                val currentFx = quotes?.fxRates ?: emptyMap()
+                // End the curve at live prices when the range ends today, so it
+                // matches the home screen and follows the market.
+                val livePrices = quotes?.quotes?.mapValues { it.value.price }
                     ?: emptyMap()
-                val calculated = HistoryCalculator.build(data, fetched.cache, currentFx, from, to)
+                val calculated = withContext(Dispatchers.Default) {
+                    HistoryCalculator.build(
+                        data,
+                        fetched.cache,
+                        currentFx,
+                        from,
+                        to,
+                        livePrices,
+                    )
+                }
                 val calculatedAt = System.currentTimeMillis()
                 android.util.Log.d(
                     "FolioPrismHistory",
                     "range=$from..$to fetch=${fetchedAt - startedAt}ms " +
                         "calc=${calculatedAt - fetchedAt}ms total=${calculatedAt - startedAt}ms",
                 )
-                calculated.copy(logs = fetched.logs + calculated.logs)
+                // Per-instrument outcome (cached / fetched / failed / exhausted)
+                // for on-device diagnostics of repeated "fetching" statuses.
+                android.util.Log.d(
+                    "FolioPrismHistory",
+                    "fetching=$fetching logs=${fetched.logs.joinToString(" | ")}",
+                )
+                if (isActive) {
+                    _historyState.value = HistoryUiState.Ready(
+                        calculated.copy(logs = fetched.logs + calculated.logs),
+                    )
+                }
+            } catch (e: CancellationException) {
+                // Superseded by a newer range request; the replacement load owns
+                // the state, so do nothing here.
+            } catch (e: Exception) {
+                if (isActive) {
+                    _historyState.value = HistoryUiState.Error(
+                        e.message ?: "历史行情计算失败",
+                    )
+                }
             }
-            _historyState.value = result.fold(
-                onSuccess = { HistoryUiState.Ready(it) },
-                onFailure = { HistoryUiState.Error(it.message ?: "历史行情计算失败") },
-            )
         }
+    }
+
+    private companion object {
+        const val MSG_FETCHING = "正在获取历史行情…"
     }
 
     fun setManualPrice(instrumentId: String, price: BigDecimal) {

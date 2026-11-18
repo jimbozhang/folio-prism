@@ -156,12 +156,13 @@ private fun MainScaffold(
                 )
             }
             composable("charts") {
-                ChartsScreen(
+                ChartsRoute(
                     data = data,
                     quotes = quotes,
+                    isRefreshing = isRefreshing,
                     historyState = historyState,
                     onLoadHistory = onLoadHistory,
-                    contentPadding = PaddingValues(0.dp),
+                    onRefresh = onRefresh,
                 )
             }
             composable("transactions") {
@@ -199,6 +200,31 @@ private fun HomeRoute(
         HomeScreen(
             data = data,
             quotes = quotes,
+            contentPadding = PaddingValues(0.dp),
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChartsRoute(
+    data: PortfolioData,
+    quotes: QuoteSnapshot,
+    isRefreshing: Boolean,
+    historyState: HistoryUiState,
+    onLoadHistory: (java.time.LocalDate, java.time.LocalDate) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        ChartsScreen(
+            data = data,
+            quotes = quotes,
+            historyState = historyState,
+            onLoadHistory = onLoadHistory,
             contentPadding = PaddingValues(0.dp),
         )
     }
