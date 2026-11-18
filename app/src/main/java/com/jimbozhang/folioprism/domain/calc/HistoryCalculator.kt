@@ -21,15 +21,29 @@ import java.time.LocalDate
 
 object HistoryCalculator {
 
+    /**
+     * [currentPrices] are live quote prices in each instrument's native
+     * currency. When [to] is today, the final curve point uses them so the
+     * curve ends at the value the home screen shows; for earlier range ends
+     * they are ignored to keep the curve purely historical.
+     */
     fun build(
         data: PortfolioData,
         cache: PriceCacheData,
         currentFxRates: Map<String, BigDecimal>,
         from: LocalDate,
         to: LocalDate,
+        currentPrices: Map<String, BigDecimal> = emptyMap(),
     ): HistoryResult {
         val eventPrices = buildEventPrices(data, to)
-        val provider = HistoricalPriceProvider(cache, currentFxRates, eventPrices)
+        val livePrices = if (to == LocalDate.now()) currentPrices else emptyMap()
+        val provider = HistoricalPriceProvider(
+            cache = cache,
+            currentFxRates = currentFxRates,
+            eventPrices = eventPrices,
+            currentPrices = livePrices,
+            currentAsOf = if (livePrices.isNotEmpty()) to else null,
+        )
         val logs = mutableListOf<String>()
         val days = generateSequence(from) { it.plusDays(1) }
             .takeWhile { !it.isAfter(to) }

@@ -214,6 +214,58 @@ class HistoryCalculatorTest {
     }
 
     @Test
+    fun livePriceSetsCurveEndWhenRangeEndsToday() {
+        val today = LocalDate.now()
+        val cache = PriceCacheData(
+            quotes = mapOf(
+                FUND to CachedSeries(
+                    auto = mapOf(
+                        today.minusDays(30).toString() to "10",
+                        today.minusDays(1).toString() to "12",
+                    ),
+                ),
+            ),
+        )
+        val result = HistoryCalculator.build(
+            data(baseEvents()),
+            cache,
+            emptyMap(),
+            today.minusDays(2),
+            today,
+            currentPrices = mapOf(FUND to bd("13")),
+        )
+
+        assertDecimal("1130", result.curve.last().totalCny)
+        // Earlier points keep their historical values.
+        assertDecimal("1100", result.curve.first().totalCny)
+    }
+
+    @Test
+    fun livePriceIgnoredWhenRangeEndsBeforeToday() {
+        val end = LocalDate.now().minusDays(1)
+        val cache = PriceCacheData(
+            quotes = mapOf(
+                FUND to CachedSeries(
+                    auto = mapOf(
+                        end.minusDays(1).toString() to "11",
+                        end.toString() to "12",
+                    ),
+                ),
+            ),
+        )
+        val result = HistoryCalculator.build(
+            data(baseEvents()),
+            cache,
+            emptyMap(),
+            end.minusDays(1),
+            end,
+            currentPrices = mapOf(FUND to bd("13")),
+        )
+
+        assertDecimal("1120", result.curve.last().totalCny)
+    }
+
+    @Test
     fun missingEndPriceMarksIncomplete() {
         val result = HistoryCalculator.build(
             data(baseEvents()),

@@ -119,10 +119,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val result = runCatching {
                 val fetched = historicalService.fetchAndCache(data, from, to)
                 val fetchedAt = System.currentTimeMillis()
-                val currentFx = (_state.value as? AppUiState.Ready)
-                    ?.quotes?.fxRates
+                val quotes = (_state.value as? AppUiState.Ready)?.quotes
+                val currentFx = quotes?.fxRates ?: emptyMap()
+                // End the curve at live prices when the range ends today, so it
+                // matches the home screen and follows the market.
+                val livePrices = quotes?.quotes?.mapValues { it.value.price }
                     ?: emptyMap()
-                val calculated = HistoryCalculator.build(data, fetched.cache, currentFx, from, to)
+                val calculated = HistoryCalculator.build(
+                    data,
+                    fetched.cache,
+                    currentFx,
+                    from,
+                    to,
+                    livePrices,
+                )
                 val calculatedAt = System.currentTimeMillis()
                 android.util.Log.d(
                     "FolioPrismHistory",

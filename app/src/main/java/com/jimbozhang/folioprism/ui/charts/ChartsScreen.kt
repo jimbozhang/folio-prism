@@ -189,12 +189,33 @@ fun ChartsScreen(
     }
     val currencyRows = remember(snapshot.currencyValues) { currencyRows(snapshot) }
 
+    val quotesFingerprint = remember(quotes) { quotesFingerprint(quotes) }
+    var historyQuotesFingerprint by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(chart, range, data.events.size) {
         if (!chart.needsHistory) return@LaunchedEffect
         val ready = historyState as? HistoryUiState.Ready
         if (ready == null || ready.result.from != range.from || ready.result.to != range.to) {
+            historyQuotesFingerprint = quotesFingerprint
             onLoadHistory(range.from, range.to)
         }
+    }
+
+    // After a quote refresh, if prices or FX rates changed since the displayed
+    // result was built, rebuild it for the same range so the chart reflects the
+    // new prices. No other setting (chart type, range, ...) is touched.
+    LaunchedEffect(quotesFingerprint, chart) {
+        if (quotesFingerprint == historyQuotesFingerprint) return@LaunchedEffect
+        if (!chart.needsHistory) return@LaunchedEffect
+        val ready = historyState as? HistoryUiState.Ready
+        if (ready == null ||
+            ready.result.from != range.from ||
+            ready.result.to != range.to
+        ) {
+            return@LaunchedEffect
+        }
+        historyQuotesFingerprint = quotesFingerprint
+        onLoadHistory(range.from, range.to)
     }
 
     Column(
@@ -1418,6 +1439,21 @@ private fun fxToCny(currency: String, fxRates: Map<String, BigDecimal>): BigDeci
         "CNY", "CNH" -> BigDecimal.ONE
         else -> fxRates[currency.uppercase()]
     }
+
+/**
+ * Fingerprint of the price information in the snapshot (instrument prices and
+ * FX rates). Used to detect whether a quote refresh actually changed a price,
+ * so that a refresh without changes does not rebuild the history result.
+ */
+private fun quotesFingerprint(quotes: QuoteSnapshot): String = buildString {
+    quotes.quotes.forEach { (instrumentId, quote) ->
+        append(instrumentId).append('=').append(quote.price).append(';')
+    }
+    append('|')
+    quotes.fxRates.forEach { (currency, rate) ->
+        append(currency).append('=').append(rate).append(';')
+    }
+}
 
 private fun monthlyFlows(
     data: PortfolioData,

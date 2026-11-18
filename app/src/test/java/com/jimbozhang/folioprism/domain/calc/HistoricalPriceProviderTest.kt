@@ -5,6 +5,7 @@ import com.jimbozhang.folioprism.domain.history.CachedSeries
 import com.jimbozhang.folioprism.domain.history.PriceCacheData
 import com.jimbozhang.folioprism.domain.money.bd
 import java.time.LocalDate
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -37,6 +38,27 @@ class HistoricalPriceProviderTest {
         // No cache near day2: fall back to the known points.
         assertDecimal("102", provider.price(instrument, day2))
         assertTrue(provider.usedInterpolation)
+    }
+
+    @Test
+    fun currentPriceOverridesCacheAtAsOfDateOnly() {
+        val cache = PriceCacheData(
+            quotes = mapOf(
+                instrument to CachedSeries(auto = mapOf("2026-01-06" to "200")),
+            ),
+        )
+        val provider = HistoricalPriceProvider(
+            cache,
+            emptyMap(),
+            points,
+            currentPrices = mapOf(instrument to bd("250")),
+            currentAsOf = day6,
+        )
+
+        assertDecimal("250", provider.price(instrument, day6))
+        // Other dates keep the historical behavior.
+        assertDecimal("200", provider.price(instrument, day11))
+        assertFalse(provider.usedInterpolation)
     }
 
     @Test
