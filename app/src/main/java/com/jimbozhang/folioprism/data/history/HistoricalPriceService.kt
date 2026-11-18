@@ -2,6 +2,7 @@ package com.jimbozhang.folioprism.data.history
 
 import com.jimbozhang.folioprism.data.price.HttpFetcher
 import com.jimbozhang.folioprism.domain.calc.localDate
+import com.jimbozhang.folioprism.domain.history.CachedSeries
 import com.jimbozhang.folioprism.domain.history.PriceCacheData
 import com.jimbozhang.folioprism.domain.model.CategoryIds
 import com.jimbozhang.folioprism.domain.model.Instrument
@@ -38,6 +39,16 @@ class HistoricalPriceService(
     // How long to refrain from retrying an instrument after a failed fetch, so
     // a failing/rate-limited source isn't hammered on every range change.
     private val failureBackoffMs: Long = 60_000L,
+    // After a successful fetch that still cannot cover the range end (the
+    // source has no data near the end, e.g. a delisted instrument), refrain
+    // from re-fetching it for this long so it cannot drive a network request
+    // and a "fetching" status on every load.
+    private val exhaustionTtlMs: Long = 24 * 60 * 60 * 1000L,
+    // Longest retry window for a source whose fetches keep failing: the
+    // window doubles with each consecutive failure (starting from
+    // exhaustionTtlMs), so a permanently failing source is probed at most
+    // once every few weeks instead of on every app start.
+    private val failureRetryCapMs: Long = 30 * 24 * 60 * 60 * 1000L,
     private val clockMs: () -> Long = { System.currentTimeMillis() },
 ) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -90,6 +101,18 @@ class HistoricalPriceService(
                 return@forEach
             }
 
+            if (isExhausted(cache, instrument.id)) {
+                // Distinguish the two ways an instrument can be exhausted: a
+                // source that keeps failing (lastFailedAtMs set) vs. a source
+                // that answers but has no data near the range end.
+                logs += if (cache.quotes[instrument.id]?.lastFailedAtMs != null) {
+                    "history backoff (failed source): ${instrument.code}"
+                } else {
+                    "history exhausted: ${instrument.code}"
+                }
+                return@forEach
+            }
+
             val result = try {
                 Result.success(
                     when (source) {
@@ -118,11 +141,57 @@ class HistoricalPriceService(
                 cacheChanged = true
                 lastFailedAt.remove(instrument.id)
                 logs += "history ok: ${instrument.code} (${series.source})"
+                val merged = cache.quotes[instrument.id]
+                if (merged != null) {
+                    if (!isCovered(merged, from, to)) {
+                        // The source answered but still has no data within the
+                        // requested end: it is exhausted (delisted, retired,
+                        // ...). Record that, so neither a network request nor a
+                        // "fetching" status repeats for it on every load until
+                        // the window elapses and one more probe is made.
+                        cache = cache.copy(
+                            quotes = cache.quotes + (
+                                instrument.id to merged.copy(
+                                    lastFailedAtMs = null,
+                                    exhaustedUntilMs = (clockMs() + exhaustionTtlMs).toString(),
+                                )
+                            ),
+                        )
+                        logs += "history exhausted: ${instrument.code} (data ends ${maxCachedDate(merged)})"
+                    } else if (merged.lastFailedAtMs != null || merged.exhaustedUntilMs != null) {
+                        // The range is covered again: drop the records so they
+                        // cannot suppress a later genuine refetch.
+                        cache = cache.copy(
+                            quotes = cache.quotes + (
+                                instrument.id to merged.copy(
+                                    lastFailedAtMs = null,
+                                    exhaustedUntilMs = null,
+                                )
+                            ),
+                        )
+                    }
+                }
             }.onFailure {
                 // A real (non-cancellation) failure: back off retries for this
                 // instrument so a failing source isn't hammered.
                 lastFailedAt[instrument.id] = clockMs()
                 logs += "history failed: ${instrument.code}: ${it.message}"
+                // Also record the failure in the persisted cache: the in-memory
+                // backoff is wiped on every restart, so without this a source
+                // that always fails would drive a fetch — and a "fetching"
+                // status — on every app start. While failures keep happening
+                // the retry window is remembered across sessions and escalates
+                // (doubling, capped at failureRetryCapMs), so a permanently
+                // failing source is probed at most every few weeks.
+                cache = cache.copy(
+                    quotes = cache.quotes + (
+                        instrument.id to newFailureRecord(
+                            cache.quotes[instrument.id] ?: CachedSeries(),
+                            clockMs(),
+                        )
+                    ),
+                )
+                cacheChanged = true
             }
         }
 
@@ -139,7 +208,7 @@ class HistoricalPriceService(
      * 15 days of the requested end (covers weekends and long holidays).
      */
     private fun isCovered(
-        series: com.jimbozhang.folioprism.domain.history.CachedSeries?,
+        series: CachedSeries?,
         from: LocalDate,
         to: LocalDate,
     ): Boolean {
@@ -175,6 +244,48 @@ class HistoricalPriceService(
     }
 
     /**
+     * Whether a recent successful fetch proved that the source of
+     * [instrumentId] has no data near the requested range end (e.g. a
+     * delisted or retired instrument): until the recorded moment another
+     * fetch would only return the same stale data, so it must neither be
+     * issued nor announced as "fetching".
+     */
+    private fun isExhausted(cache: PriceCacheData, instrumentId: String): Boolean {
+        val until = cache.quotes[instrumentId]?.exhaustedUntilMs?.toLongOrNull() ?: return false
+        return clockMs() < until
+    }
+
+    /**
+     * The persisted failure record after a failed fetch: [prev]'s
+     * lastFailedAtMs is updated to now, and a REPEATED failure (a record
+     * already existed) arms an escalating retry window in
+     * [CachedSeries.exhaustedUntilMs] — doubling from exhaustionTtlMs on each
+     * consecutive failure, capped at failureRetryCapMs. The first recorded
+     * failure arms no window: the next start still retries once, so a
+     * transient failure self-heals without a full day of quiet.
+     */
+    private fun newFailureRecord(prev: CachedSeries, nowMs: Long): CachedSeries {
+        if (prev.lastFailedAtMs == null) {
+            return prev.copy(lastFailedAtMs = nowMs.toString())
+        }
+        val prevWindowMs = prev.exhaustedUntilMs?.toLongOrNull()
+            ?.minus(prev.lastFailedAtMs.toLongOrNull() ?: 0L)
+            ?: 0L
+        val nextWindowMs = minOf(failureRetryCapMs, maxOf(exhaustionTtlMs, prevWindowMs * 2))
+        return prev.copy(
+            lastFailedAtMs = nowMs.toString(),
+            exhaustedUntilMs = (nowMs + nextWindowMs).toString(),
+        )
+    }
+
+    private fun maxCachedDate(series: CachedSeries?): LocalDate? {
+        if (series == null) return null
+        return (series.auto.keys + series.manual.keys)
+            .mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }
+            .maxOrNull()
+    }
+
+    /**
      * Whether loading [from, to] for [data] would issue any network request:
      * some held instrument is neither covered by the cache nor in backoff.
      * Used to pick a truthful status message (fetching vs. just computing).
@@ -192,7 +303,8 @@ class HistoricalPriceService(
                 HistorySource.UNKNOWN,
             ) &&
                 !isCovered(cache.quotes[instrument.id], from, to) &&
-                !inBackoff(instrument.id)
+                !inBackoff(instrument.id) &&
+                !isExhausted(cache, instrument.id)
         }
     }
 

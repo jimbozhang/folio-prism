@@ -167,6 +167,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     "range=$from..$to fetch=${fetchedAt - startedAt}ms " +
                         "calc=${calculatedAt - fetchedAt}ms total=${calculatedAt - startedAt}ms",
                 )
+                // Per-instrument outcome (cached / fetched / failed / exhausted)
+                // for on-device diagnostics of repeated "fetching" statuses.
+                android.util.Log.d(
+                    "FolioPrismHistory",
+                    "fetching=$fetching logs=${fetched.logs.joinToString(" | ")}",
+                )
                 if (isActive) {
                     _historyState.value = HistoryUiState.Ready(
                         calculated.copy(logs = fetched.logs + calculated.logs),

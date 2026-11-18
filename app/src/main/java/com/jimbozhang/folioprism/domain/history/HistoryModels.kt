@@ -10,6 +10,20 @@ data class CachedSeries(
     val manual: Map<String, String> = emptyMap(),
     val lastAutoFetchAt: String? = null,
     val source: String? = null,
+    /**
+     * Epoch millis until which this series must not be re-fetched: either a
+     * successful fetch proved the source has no data near the requested range
+     * end (e.g. a delisted or retired instrument), or consecutive fetch
+     * failures armed an escalating retry window — so the source is not chased
+     * on every app start. Null: no exhaustion record.
+     */
+    val exhaustedUntilMs: String? = null,
+    /**
+     * Epoch millis of the last failed fetch, persisted so the failure is not
+     * forgotten on restart (the in-memory backoff alone is wiped on every
+     * start). Null: no recorded failure.
+     */
+    val lastFailedAtMs: String? = null,
 )
 
 @Serializable
