@@ -2,6 +2,7 @@ package com.jimbozhang.folioprism.data.store
 
 import com.jimbozhang.folioprism.data.json.DefaultData
 import com.jimbozhang.folioprism.data.json.PortfolioJson
+import com.jimbozhang.folioprism.domain.calc.eventComparator
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import java.io.File
 import java.time.OffsetDateTime
@@ -34,6 +35,10 @@ class PortfolioRepository(
     suspend fun save(data: PortfolioData): PortfolioData = withContext(dispatcher) {
         val updated = data.copy(
             meta = data.meta.copy(updatedAt = OffsetDateTime.now().toString()),
+            // The file is rewritten in full on every save, so the stored ledger
+            // can always be kept in chronological order. Calculations sort
+            // independently, so this is purely for the raw file's readability.
+            events = data.events.sortedWith(eventComparator()),
         )
         BackupManager(backupDir).backupBeforeWrite(
             file = dataFile,

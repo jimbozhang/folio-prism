@@ -2,6 +2,7 @@ package com.jimbozhang.folioprism.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import com.jimbozhang.folioprism.FolioPrismApplication
 import androidx.lifecycle.viewModelScope
 import com.jimbozhang.folioprism.data.history.HistoricalPriceService
 import com.jimbozhang.folioprism.data.history.PriceCacheRepository
@@ -51,10 +52,10 @@ sealed interface AppUiState {
 class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val fetcher = OkHttpFetcher()
-    private val repository = PortfolioRepository(
-        dataFile = StoragePaths.dataFile(),
-        backupDir = StoragePaths.backupDir(),
-    )
+    // The process-wide repository: the UI and any in-process service observe
+    // the same in-memory state, so one can never overwrite the other.
+    private val repository: PortfolioRepository =
+        (application as FolioPrismApplication).portfolioRepository
     private val priceCacheRepository = PriceCacheRepository(StoragePaths.priceCacheFile())
     private val quoteService = QuoteService(fetcher)
     private val historicalService = HistoricalPriceService(fetcher, priceCacheRepository)
