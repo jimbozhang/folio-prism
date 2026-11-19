@@ -515,24 +515,41 @@ private fun CategoryCard(
             if (expanded) {
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = FolioDivider)
-                val offsets = listOfNotNull(
-                    category.gapToMinCny?.let { "下限" to it },
-                    category.gapToTargetCny?.let { "目标" to it },
-                    category.gapToMaxCny?.let { "上限" to it },
-                )
-                if (offsets.isNotEmpty()) {
+                val details = listOf(
+                    Triple("下限", category.minValueCny, category.gapToMinCny),
+                    Triple("目标", category.targetValueCny, category.gapToTargetCny),
+                    Triple("上限", category.maxValueCny, category.gapToMaxCny),
+                ).filter { (_, value, diff) -> value != null || diff != null }
+                if (details.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        offsets.forEach { (label, diff) ->
-                            Text(
-                                text = offsetText(label, diff),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (diff.signum() == 0) {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                } else {
-                                    statusColor
-                                },
-                            )
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        details.forEach { (label, value, diff) ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.width(40.dp),
+                                )
+                                Text(
+                                    text = formatCny(value),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FolioInk,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    text = offsetDetailText(diff),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (diff == null || diff.signum() == 0) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    } else {
+                                        statusColor
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -660,8 +677,9 @@ private fun parseCategoryColor(category: Category): Color =
     runCatching { Color(android.graphics.Color.parseColor(category.color)) }
         .getOrElse { FolioGold }
 
-private fun offsetText(label: String, diff: BigDecimal): String = when {
-    diff.signum() > 0 -> "高于$label ${formatCny(diff)}"
-    diff.signum() < 0 -> "低于$label ${formatCny(diff.abs())}"
-    else -> "与${label}持平"
+private fun offsetDetailText(diff: BigDecimal?): String = when {
+    diff == null -> "--"
+    diff.signum() > 0 -> "高 ${formatCny(diff)}"
+    diff.signum() < 0 -> "低 ${formatCny(diff.abs())}"
+    else -> "持平"
 }

@@ -543,7 +543,7 @@ internal fun signedNative(value: BigDecimal, currency: String): String =
 internal fun signedQuantity(value: BigDecimal, unit: String): String =
     (if (value.signum() < 0) "-" else "+") + formatQuantity(value.abs()) + " " + unit
 
-private fun linkedIdsToRemove(data: PortfolioData, event: Event): Set<String> {
+internal fun linkedIdsToRemove(data: PortfolioData, event: Event): Set<String> {
     val ids = mutableSetOf(event.id)
     when (event) {
         is TransferEvent -> data.events

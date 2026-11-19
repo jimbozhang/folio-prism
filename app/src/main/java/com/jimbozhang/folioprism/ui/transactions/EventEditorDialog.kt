@@ -46,7 +46,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.jimbozhang.folioprism.data.price.LivePriceProvider
+import com.jimbozhang.folioprism.domain.calc.EventReplay
 import com.jimbozhang.folioprism.domain.calc.EventValues
+import com.jimbozhang.folioprism.domain.calc.TransferSuggestion
+import com.jimbozhang.folioprism.domain.calc.Valuation
 import com.jimbozhang.folioprism.domain.calc.localDate
 import com.jimbozhang.folioprism.domain.calc.parseEventTime
 import com.jimbozhang.folioprism.domain.model.AdjustmentEvent
@@ -127,6 +131,8 @@ internal class EventForm(
     var toInstrumentId by mutableStateOf<String?>(null)
     var toQuantity by mutableStateOf("")
     var toPrice by mutableStateOf("")
+    /** Last value this form suggested for [toQuantity]; user input wins. */
+    var lastSuggestedToQuantity by mutableStateOf<String?>(null)
     var feeLoss by mutableStateOf("")
     var feeFromCash by mutableStateOf(false)
     var feeInstitutionId by mutableStateOf<String?>(null)
@@ -265,6 +271,24 @@ fun EventEditorDialog(
         data.settings.categories.associate { it.id to it.name }
     }
 
+    // Holdings excluding the event being edited, so an edit never counts its
+    // own out-leg as available again.
+    val editablePositions = remember(data.events, initial?.id) {
+        val excluded = initial?.let { linkedIdsToRemove(data, it) } ?: emptySet()
+        EventReplay.replay(data.events.filterNot { it.id in excluded })
+    }
+    val positionValues = remember(editablePositions, quotes) {
+        editablePositions.mapValues { (key, quantity) ->
+            Valuation.valuePosition(
+                data,
+                key,
+                quantity,
+                LivePriceProvider(quotes),
+                LocalDate.now(),
+            )
+        }
+    }
+
     val save: () -> Unit = {
         buildEvents(data, quotes, form, initial)
             .onSuccess(onSave)
@@ -322,7 +346,12 @@ fun EventEditorDialog(
                             .verticalScroll(rememberScrollState()),
                     ) {
                         when (form.type) {
-                            "transfer" -> TransferSection(data, quotes, form) { picker = it }
+                            "transfer" -> TransferSection(
+                                data = data,
+                                quotes = quotes,
+                                form = form,
+                                positions = editablePositions,
+                            ) { picker = it }
                             "income" -> IncomeSection(data, quotes, form) { picker = it }
                             "external" -> ExternalSection(data, quotes, form) { picker = it }
                             "expense" -> ExpenseSection(data, quotes, form) { picker = it }
@@ -340,7 +369,7 @@ fun EventEditorDialog(
 
                 val target = picker
                 if (target != null) {
-                    val config = pickerConfig(target, data, quotes, form, cashInstruments)
+                    val config = pickerConfig(target, data, quotes, form, cashInstruments, initial)
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -358,6 +387,10 @@ fun EventEditorDialog(
                         categoryNames = categoryNames,
                         selectedInstitutionId = config.institutionId,
                         selectedInstrumentId = config.instrumentId,
+                        quantities = editablePositions,
+                        values = positionValues,
+                        heldOnlyFilter = config.heldFilter,
+                        eligibleInstrumentIds = config.eligibleInstrumentIds,
                         onSelect = config.onSelect,
                         onDismiss = { picker = null },
                     )
@@ -500,6 +533,8 @@ private class PickerConfig(
     val instruments: List<Instrument>,
     val institutionId: String?,
     val instrumentId: String?,
+    val heldFilter: Boolean = false,
+    val eligibleInstrumentIds: Set<String>? = null,
     val onSelect: (String, String) -> Unit,
 )
 
@@ -509,6 +544,7 @@ private fun pickerConfig(
     quotes: QuoteSnapshot,
     form: EventForm,
     cashInstruments: List<Instrument>,
+    initial: Event?,
 ): PickerConfig {
     return when (target) {
         PickerTarget.TRANSFER_FROM -> PickerConfig(
@@ -516,12 +552,17 @@ private fun pickerConfig(
             instruments = data.instruments,
             institutionId = form.fromInstitutionId,
             instrumentId = form.fromInstrumentId,
+            heldFilter = true,
         ) { institutionId, instrumentId ->
             form.fromInstitutionId = institutionId
             form.fromInstrumentId = instrumentId
             val instrument = data.instrument(instrumentId)
-            if (form.fromPrice.isBlank() && instrument?.kind == InstrumentKind.QUOTED) {
-                form.fromPrice = quotePrice(quotes, instrument)?.toPlainString() ?: ""
+            // A new instrument always refills the price with its own quote;
+            // whatever the user types afterwards wins.
+            form.fromPrice = if (instrument?.kind == InstrumentKind.QUOTED) {
+                TransferSuggestion.suggestPrice(quotes, instrument) ?: ""
+            } else {
+                ""
             }
         }
 
@@ -534,8 +575,10 @@ private fun pickerConfig(
             form.toInstitutionId = institutionId
             form.toInstrumentId = instrumentId
             val instrument = data.instrument(instrumentId)
-            if (form.toPrice.isBlank() && instrument?.kind == InstrumentKind.QUOTED) {
-                form.toPrice = quotePrice(quotes, instrument)?.toPlainString() ?: ""
+            form.toPrice = if (instrument?.kind == InstrumentKind.QUOTED) {
+                TransferSuggestion.suggestPrice(quotes, instrument) ?: ""
+            } else {
+                ""
             }
         }
 
@@ -554,6 +597,11 @@ private fun pickerConfig(
             instruments = data.instruments,
             institutionId = form.sourceInstitutionId,
             instrumentId = form.sourceInstrumentId,
+            eligibleInstrumentIds = if (initial == null && form.incomeKind == "dividend") {
+                dividendSourceInstrumentIds(data)
+            } else {
+                null
+            },
         ) { institutionId, instrumentId ->
             form.sourceInstitutionId = institutionId
             form.sourceInstrumentId = instrumentId
@@ -932,7 +980,7 @@ private fun Event?.typeKey(): String = when (this) {
 }
 
 internal fun heroQuantityLabel(instrument: Instrument?): String = when {
-    instrument == null -> "金额"
+    instrument == null -> ""
     instrument.kind == InstrumentKind.CASH -> instrument.currency
     else -> instrument.unit
 }
@@ -959,6 +1007,23 @@ internal fun setTime(form: EventForm, time: LocalTime) {
     setFormDateTime(form, LocalDateTime.of(formDateTime(form).toLocalDate(), time))
 }
 
+/**
+ * Dividend sources are limited to dividend-category assets and USD-denominated
+ * US equity/bond assets, matching the assets that pay distributions.
+ */
+internal fun dividendSourceInstrumentIds(data: PortfolioData): Set<String> {
+    val usEquityBond = setOf(CategoryIds.US_EQUITY, CategoryIds.US_BOND)
+    return data.instruments
+        .filter { instrument ->
+            val category = data.settings.categories.firstOrNull { it.id == instrument.categoryId }
+            category?.specialRule == "dividend" ||
+                (instrument.categoryId in usEquityBond &&
+                    instrument.currency.equals("USD", ignoreCase = true))
+        }
+        .map { it.id }
+        .toSet()
+}
+
 internal fun swapTransferSides(form: EventForm) {
     val fromInst = form.fromInstrumentId
     val fromInstId = form.fromInstitutionId
@@ -974,4 +1039,5 @@ internal fun swapTransferSides(form: EventForm) {
     form.toInstitutionId = fromInstId
     form.toQuantity = fromQty
     form.toPrice = fromPx
+    form.lastSuggestedToQuantity = null
 }
