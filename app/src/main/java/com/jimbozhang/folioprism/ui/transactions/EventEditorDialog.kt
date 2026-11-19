@@ -11,11 +11,11 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -35,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,10 +43,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import android.view.WindowManager
 import com.jimbozhang.folioprism.data.price.LivePriceProvider
 import com.jimbozhang.folioprism.domain.calc.EventReplay
 import com.jimbozhang.folioprism.domain.calc.EventValues
@@ -258,6 +262,14 @@ fun EventEditorDialog(
     onSave: (List<Event>) -> Unit,
 ) {
     val form = remember(initial?.id) { EventForm(initial, data) }
+    val dialogView = LocalView.current
+    // The editor is a full-screen Dialog window; make sure it resizes for the
+    // IME so focused fields and the save bar are never hidden by the keyboard.
+    LaunchedEffect(dialogView) {
+        val window = (dialogView.parent as? DialogWindowProvider)?.window
+            ?: return@LaunchedEffect
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+    }
     var error by remember(initial?.id) { mutableStateOf<String?>(null) }
     var picker by remember { mutableStateOf<PickerTarget?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -306,8 +318,7 @@ fun EventEditorDialog(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
                     .background(Color.White),
             ) {
                 Scaffold(

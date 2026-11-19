@@ -22,7 +22,9 @@ import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import java.math.BigDecimal
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TransferSuggestionTest {
@@ -412,6 +414,220 @@ class TransferSuggestionTest {
             fromInstrumentId = FUND,
             toInstrumentId = CASH_CNY,
         )
+        assertNull(suggested)
+    }
+
+    // --- suggestRebalanceIn ---
+
+    @Test
+    fun rebalanceInFillsBothSidesToTarget() {
+        // total 4000, growth 3000, cash 1000; cash target 50% -> +1000.
+        val data = dataWithCategories(
+            instruments = listOf(fund, cashCny),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CASH, "50"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceIn(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, FUND) to bd("1500"),
+                PositionKey(INST_A, CASH_CNY) to bd("1000"),
+            ),
+            provider = rebalanceProvider(mapOf(FUND to bd("2"))),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstitutionId = INST_A,
+            toInstrumentId = CASH_CNY,
+        )
+
+        assertDecimal("500", suggested?.fromQuantity)
+        assertDecimal("1000", suggested?.toQuantity)
+        assertFalse(suggested?.cappedBySource ?: true)
+    }
+
+    @Test
+    fun rebalanceInAccountsForShrinkingBaseWhenSourceIsDividend() {
+        // total 4000, dividend 2000, cash 500, growth 1500; portfolio 2000.
+        // cash target 50%: D = (0.5*2000 - 500) / 0.5 = 1000.
+        val data = dataWithCategories(
+            instruments = listOf(divInstrument, fund, cashCny),
+            categories = listOf(
+                category(CategoryIds.DIVIDEND, "30", dividend = true),
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CASH, "50"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceIn(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, "ins_dividend") to bd("1000"),
+                PositionKey(INST_A, FUND) to bd("750"),
+                PositionKey(INST_A, CASH_CNY) to bd("500"),
+            ),
+            provider = rebalanceProvider(
+                mapOf("ins_dividend" to bd("2"), FUND to bd("2")),
+            ),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = "ins_dividend",
+            toInstitutionId = INST_A,
+            toInstrumentId = CASH_CNY,
+        )
+
+        assertDecimal("500", suggested?.fromQuantity)
+        assertDecimal("1000", suggested?.toQuantity)
+    }
+
+    @Test
+    fun rebalanceInToDividendUsesTotalValueAsBase() {
+        // total 5000, dividend 1000, growth 3000, cash 1000.
+        // dividend target 30%: D = 0.3*5000 - 1000 = 500.
+        val data = dataWithCategories(
+            instruments = listOf(divInstrument, fund, cashCny),
+            categories = listOf(
+                category(CategoryIds.DIVIDEND, "30", dividend = true),
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CASH, "50"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceIn(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, "ins_dividend") to bd("500"),
+                PositionKey(INST_A, FUND) to bd("1500"),
+                PositionKey(INST_A, CASH_CNY) to bd("1000"),
+            ),
+            provider = rebalanceProvider(
+                mapOf("ins_dividend" to bd("2"), FUND to bd("2")),
+            ),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstitutionId = INST_A,
+            toInstrumentId = "ins_dividend",
+        )
+
+        assertDecimal("250", suggested?.fromQuantity)
+        assertDecimal("250", suggested?.toQuantity)
+    }
+
+    @Test
+    fun rebalanceInIsCappedAtSourceHoldingValue() {
+        // total 3000, growth 1000, cn bond 2000, cash 0; cash target 80%
+        // needs 2400 but only 1000 is available from the growth holding.
+        val cnBond = quotedInstrument("ins_cn_bond", CategoryIds.CN_BOND, "CNY", "511130")
+        val data = dataWithCategories(
+            instruments = listOf(fund, cnBond, cashCny),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CN_BOND, "50"),
+                category(CategoryIds.CASH, "80"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceIn(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, FUND) to bd("500"),
+                PositionKey(INST_A, "ins_cn_bond") to bd("1000"),
+            ),
+            provider = rebalanceProvider(
+                mapOf(FUND to bd("2"), "ins_cn_bond" to bd("2")),
+            ),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstitutionId = INST_A,
+            toInstrumentId = CASH_CNY,
+        )
+
+        assertDecimal("500", suggested?.fromQuantity)
+        assertDecimal("1000", suggested?.toQuantity)
+        assertTrue(suggested?.cappedBySource ?: false)
+    }
+
+    @Test
+    fun rebalanceInReturnsNullWhenDestinationAtTarget() {
+        // cash target 10% but cash already 1000/4000 = 25%.
+        val data = dataWithCategories(
+            instruments = listOf(fund, cashCny),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CASH, "10"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceIn(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, FUND) to bd("1500"),
+                PositionKey(INST_A, CASH_CNY) to bd("1000"),
+            ),
+            provider = rebalanceProvider(mapOf(FUND to bd("2"))),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstitutionId = INST_A,
+            toInstrumentId = CASH_CNY,
+        )
+
+        assertNull(suggested)
+    }
+
+    @Test
+    fun rebalanceInReturnsNullForSameCategory() {
+        val growth2Local = quotedInstrument("ins_growth_local", CategoryIds.GROWTH, "CNY", "000009")
+        val data = dataWithCategories(
+            instruments = listOf(fund, growth2Local, cashCny),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CASH, "50"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceIn(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, FUND) to bd("1500"),
+                PositionKey(INST_A, "ins_growth_local") to bd("100"),
+                PositionKey(INST_A, CASH_CNY) to bd("1000"),
+            ),
+            provider = rebalanceProvider(
+                mapOf(FUND to bd("2"), "ins_growth_local" to bd("3")),
+            ),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstitutionId = INST_A,
+            toInstrumentId = "ins_growth_local",
+        )
+
+        assertNull(suggested)
+    }
+
+    @Test
+    fun rebalanceInReturnsNullWhenPricesMissing() {
+        val data = dataWithCategories(
+            instruments = listOf(fund, cashCny),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CASH, "50"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceIn(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, FUND) to bd("1500"),
+                PositionKey(INST_A, CASH_CNY) to bd("1000"),
+            ),
+            provider = rebalanceProvider(emptyMap()),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstitutionId = INST_A,
+            toInstrumentId = CASH_CNY,
+        )
+
         assertNull(suggested)
     }
 

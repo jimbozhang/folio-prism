@@ -120,6 +120,18 @@ internal fun TransferSection(
         toInstrumentId = form.toInstrumentId,
         toPrice = form.toPrice.toBigDecimalOrNull(),
     )
+    // Receive-side rebalancing: move enough value in to bring the destination
+    // category to its target share, filling both sides of the transfer.
+    val suggestedIn = TransferSuggestion.suggestRebalanceIn(
+        data = data,
+        positions = positions,
+        provider = LivePriceProvider(quotes),
+        date = LocalDate.now(),
+        fromInstitutionId = form.fromInstitutionId,
+        fromInstrumentId = form.fromInstrumentId,
+        toInstitutionId = form.toInstitutionId,
+        toInstrumentId = form.toInstrumentId,
+    )
 
     // Seed the receive side while it is blank or still holds the last
     // suggestion. Once the user types another number, that number wins.
@@ -208,6 +220,29 @@ internal fun TransferSection(
             null
         },
     )
+    if (suggestedIn != null &&
+        (suggestedIn.fromQuantity.toPlainString() != form.fromQuantity ||
+            suggestedIn.toQuantity.toPlainString() != form.toQuantity)
+    ) {
+        TextButton(
+            onClick = {
+                form.fromQuantity = suggestedIn.fromQuantity.toPlainString()
+                form.toQuantity = suggestedIn.toQuantity.toPlainString()
+                // Treat the result as explicit user input so the value-based
+                // suggestion does not replace it afterwards.
+                form.lastSuggestedToQuantity = null
+            },
+            modifier = Modifier.padding(start = 8.dp),
+        ) {
+            Text(
+                text = "按目标占比：" + formatQuantity(suggestedIn.toQuantity) + " " +
+                    heroQuantityLabel(toInstrument) +
+                    if (suggestedIn.cappedBySource) "（受转出上限）" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = FolioGold,
+            )
+        }
+    }
     if (suggestedTo != null && suggestedTo.toPlainString() != form.toQuantity) {
         TextButton(
             onClick = {

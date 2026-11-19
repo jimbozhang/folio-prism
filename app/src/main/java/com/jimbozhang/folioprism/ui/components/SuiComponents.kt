@@ -1,5 +1,6 @@
 package com.jimbozhang.folioprism.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -12,12 +13,16 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -35,6 +40,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,9 +48,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -411,6 +419,29 @@ fun FilterDropdown(
 }
 
 /**
+ * Keeps a text field fully visible when the keyboard opens. The default
+ * bring-into-view only guarantees the cursor line; the rest of the field can
+ * remain clipped below the IME. Re-request the whole field whenever focus or
+ * the IME inset changes.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Modifier.bringIntoViewWhenFocused(): Modifier {
+    val requester = remember { BringIntoViewRequester() }
+    var focused by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    LaunchedEffect(focused, imeBottom) {
+        if (focused) {
+            requester.bringIntoView()
+        }
+    }
+    return this
+        .bringIntoViewRequester(requester)
+        .onFocusChanged { focused = it.isFocused }
+}
+
+/**
  * Large amount input matching Sui's editor: small label and unit above, big
  * number, and an underline that turns gold while focused.
  */
@@ -487,7 +518,9 @@ fun AmountHero(
                         innerTextField()
                     }
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewWhenFocused(),
             )
         }
         Spacer(modifier = Modifier.height(4.dp))
@@ -546,7 +579,9 @@ fun InlineNumberField(
                     innerTextField()
                 }
             },
-            modifier = modifier.fillMaxWidth(),
+            modifier = modifier
+                .fillMaxWidth()
+                .bringIntoViewWhenFocused(),
         )
     }
 }
@@ -588,7 +623,9 @@ fun InlineTextField(
                     innerTextField()
                 }
             },
-            modifier = modifier.fillMaxWidth(),
+            modifier = modifier
+                .fillMaxWidth()
+                .bringIntoViewWhenFocused(),
         )
     }
 }

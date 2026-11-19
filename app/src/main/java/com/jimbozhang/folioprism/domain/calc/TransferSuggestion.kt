@@ -133,6 +133,101 @@ object TransferSuggestion {
             .setScale(fromInstrument.precision.quantityDecimals, RoundingMode.DOWN)
     }
 
+    /**
+     * Suggests a transfer INTO the destination position that brings the
+     * destination category to its target share. Returns both sides of the
+     * trade: the source quantity to send and the receive quantity it buys.
+     *
+     * The value moving into a non-dividend destination grows the portfolio
+     * base when the source is a dividend category, so that case solves
+     * (Vc + D) / (P + D) = p. Every other case uses D = p * base - Vc. The
+     * amount is capped at the source holding's value; the result is marked so
+     * the UI can say the target cannot be reached with this holding.
+     */
+    fun suggestRebalanceIn(
+        data: PortfolioData,
+        positions: Map<PositionKey, BigDecimal>,
+        provider: PriceProvider,
+        date: LocalDate,
+        fromInstitutionId: String?,
+        fromInstrumentId: String?,
+        toInstitutionId: String?,
+        toInstrumentId: String?,
+    ): RebalanceInSuggestion? {
+        val fromInstrument = data.instrument(fromInstrumentId ?: return null) ?: return null
+        val fromCategory = data.categoryOf(fromInstrument.id) ?: return null
+        val toInstrument = data.instrument(toInstrumentId ?: return null) ?: return null
+        val toCategory = data.categoryOf(toInstrument.id) ?: return null
+        // Moving value inside one category does not change its share.
+        if (fromCategory.id == toCategory.id) return null
+
+        val fromInstitution = fromInstitutionId ?: return null
+        val toInstitution = toInstitutionId ?: return null
+        val fromKey = PositionKey(fromInstitution, fromInstrument.id)
+        val holding = positions[fromKey] ?: return null
+        if (holding.signum() <= 0) return null
+        val holdingValue = Valuation.valuePosition(data, fromKey, holding, provider, date)
+            ?: return null
+        if (holdingValue.signum() <= 0) return null
+
+        val snapshot = SnapshotCalculator.build(data, positions, provider, date)
+        val totalValue = snapshot.totalValueCny
+        val portfolioValue = snapshot.portfolioValueCny
+        val toValue = snapshot.categories
+            .firstOrNull { it.category.id == toCategory.id }
+            ?.valueCny ?: BigDecimal.ZERO
+
+        val p = SnapshotCalculator.fraction(toCategory.targetPct)
+        val toIsDividend = toCategory.specialRule == "dividend"
+        val fromIsDividend = fromCategory.specialRule == "dividend"
+        val base = if (toIsDividend) totalValue else portfolioValue
+        if (base.signum() <= 0) return null
+
+        var required = if (!toIsDividend && fromIsDividend) {
+            val oneMinusP = BigDecimal.ONE.subtract(p)
+            if (oneMinusP.signum() <= 0) {
+                return null
+            }
+            p.multiply(portfolioValue).subtract(toValue)
+                .divide(oneMinusP, DIVISION_SCALE, RoundingMode.HALF_UP)
+        } else {
+            p.multiply(base).subtract(toValue)
+        }
+        // At or above target: no transfer needed.
+        if (required.signum() <= 0) return null
+
+        val cappedBySource = required > holdingValue
+        if (cappedBySource) required = holdingValue
+
+        // Value of one receive unit at the destination institution, so gold
+        // premiums and FX are handled the same way as normal valuation.
+        val toUnitValue = Valuation.valuePosition(
+            data,
+            PositionKey(toInstitution, toInstrument.id),
+            BigDecimal.ONE,
+            provider,
+            date,
+        ) ?: return null
+        if (toUnitValue.signum() <= 0) return null
+
+        val fromQuantity = required
+            .multiply(holding)
+            .divide(holdingValue, DIVISION_SCALE, RoundingMode.HALF_UP)
+            .setScale(fromInstrument.precision.quantityDecimals, RoundingMode.DOWN)
+        if (fromQuantity.signum() <= 0) return null
+        // Recompute the value actually moved after rounding the source
+        // quantity down, so the receive side matches it instead of showing a
+        // spurious one-cent loss.
+        val movedValue = fromQuantity
+            .multiply(holdingValue)
+            .divide(holding, DIVISION_SCALE, RoundingMode.HALF_UP)
+        val toQuantity = movedValue
+            .divide(toUnitValue, DIVISION_SCALE, RoundingMode.HALF_UP)
+            .setScale(toInstrument.precision.quantityDecimals, RoundingMode.DOWN)
+        if (toQuantity.signum() <= 0) return null
+        return RebalanceInSuggestion(fromQuantity, toQuantity, cappedBySource)
+    }
+
     /** Current quote (or manual price) used to prefill a price field. */
     fun suggestPrice(quotes: QuoteSnapshot, instrument: Instrument?): String? =
         if (instrument?.kind == InstrumentKind.QUOTED) {
@@ -179,4 +274,11 @@ object TransferSuggestion {
 data class QuantitySuggestion(
     val value: String,
     val lastSuggested: String?,
+)
+
+/** Both sides of a transfer that moves the destination category to target. */
+data class RebalanceInSuggestion(
+    val fromQuantity: BigDecimal,
+    val toQuantity: BigDecimal,
+    val cappedBySource: Boolean,
 )
