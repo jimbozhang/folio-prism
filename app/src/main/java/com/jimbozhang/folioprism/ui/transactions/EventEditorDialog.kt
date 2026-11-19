@@ -17,15 +17,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -343,11 +340,16 @@ fun EventEditorDialog(
                                     error = null
                                 },
                             )
+                            if (!error.isNullOrBlank()) {
+                                Text(
+                                    text = error ?: "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FolioCoral,
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                                )
+                            }
                             HorizontalDivider(color = FolioDivider)
                         }
-                    },
-                    bottomBar = {
-                        EditorSaveBar(error = error, onSave = save)
                     },
                 ) { innerPadding ->
                     Column(
@@ -503,39 +505,6 @@ private fun EditorTopBar(
             style = MaterialTheme.typography.titleMedium,
             color = FolioInk,
         )
-    }
-}
-
-@Composable
-private fun EditorSaveBar(error: String?, onSave: () -> Unit) {
-    Surface(color = Color.White, shadowElevation = 8.dp) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 50.dp),
-        ) {
-            if (!error.isNullOrBlank()) {
-                Text(
-                    text = error,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FolioCoral,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-            }
-            Button(
-                onClick = onSave,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                shape = RoundedCornerShape(24.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = FolioGold,
-                    contentColor = Color(0xFF2B1D0E),
-                ),
-            ) {
-                Text("保存", style = MaterialTheme.typography.titleMedium)
-            }
-        }
     }
 }
 
