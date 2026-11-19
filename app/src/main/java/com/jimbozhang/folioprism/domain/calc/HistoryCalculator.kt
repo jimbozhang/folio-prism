@@ -199,7 +199,30 @@ object HistoryCalculator {
                     }
                 }
 
-                is OpeningEvent -> Unit
+                is OpeningEvent -> {
+                    // An opening inside the range adds holdings out of
+                    // nowhere; treat its value as capital inflow so it never
+                    // shows up as profit.
+                    val instrument = data.instrument(event.position.instrumentId)
+                    val category = instrument?.categoryId
+                    val rate = instrument?.let { fx(it.currency, provider) }
+                    if (instrument != null && category != null && rate != null) {
+                        val native = when {
+                            instrument.kind == InstrumentKind.CASH ->
+                                event.amount ?: event.quantity
+
+                            event.quantity != null -> {
+                                val price = event.price ?: provider.price(instrument.id, date)
+                                price?.let { event.quantity.multiply(it) }
+                            }
+
+                            else -> event.amount
+                        }
+                        if (native != null) {
+                            add(flows, category, native.multiply(rate))
+                        }
+                    }
+                }
             }
         }
 

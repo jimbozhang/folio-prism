@@ -244,6 +244,20 @@ object SnapshotCalculator {
             .divide(oneMinusP, AMOUNT_SCALE, RoundingMode.HALF_UP)
     }
 
+    /**
+     * Shared scale of the overview chart: the largest total-value-based
+     * actual or target share across all categories, floored at 10%, grown by
+     * 15% headroom and capped at 100%. All rows of the chart share this
+     * single scale so bar lengths are comparable across categories.
+     */
+    fun overviewScale(categories: List<CategorySnapshot>): Float {
+        var scale = 0.1f
+        categories.forEach { category ->
+            scale = maxOf(scale, category.visualShare.toFloat(), category.visualTarget.toFloat())
+        }
+        return minOf(scale * 1.15f, 1f)
+    }
+
     fun fraction(percent: BigDecimal): BigDecimal =
         percent.divide(ONE_HUNDRED, RATIO_SCALE, RoundingMode.HALF_UP)
 

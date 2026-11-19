@@ -66,8 +66,11 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jimbozhang.folioprism.data.price.LivePriceProvider
+import com.jimbozhang.folioprism.domain.calc.DividendStats
+import com.jimbozhang.folioprism.domain.calc.DividendStatsCalculator
 import com.jimbozhang.folioprism.domain.calc.EventReplay
 import com.jimbozhang.folioprism.domain.calc.PortfolioSnapshot
 import com.jimbozhang.folioprism.domain.calc.PositionKey
@@ -93,12 +96,14 @@ import com.jimbozhang.folioprism.ui.components.RangeArrowButton
 import com.jimbozhang.folioprism.ui.components.formatCny
 import com.jimbozhang.folioprism.ui.components.formatPercent
 import com.jimbozhang.folioprism.ui.theme.FolioBackground
+import com.jimbozhang.folioprism.ui.theme.FolioBlue
 import com.jimbozhang.folioprism.ui.theme.FolioCoral
 import com.jimbozhang.folioprism.ui.theme.FolioDivider
 import com.jimbozhang.folioprism.ui.theme.FolioGold
 import com.jimbozhang.folioprism.ui.theme.FolioGreen
 import com.jimbozhang.folioprism.ui.theme.FolioInk
 import com.jimbozhang.folioprism.ui.theme.FolioMuted
+import com.jimbozhang.folioprism.ui.theme.FolioPurple
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.YearMonth
@@ -114,6 +119,7 @@ private enum class ChartType(
     CATEGORY_PNL("类别盈亏", Icons.Outlined.PieChart, needsHistory = true, usesRange = true),
     FLOWS("投入取出", Icons.Outlined.Savings, needsHistory = false, usesRange = true),
     EXPENSES("费用统计", Icons.AutoMirrored.Outlined.ReceiptLong, needsHistory = false, usesRange = true),
+    DIVIDENDS("分红统计", Icons.Outlined.Payments, needsHistory = false, usesRange = true),
     INSTITUTIONS("机构分布", Icons.Outlined.AccountBalance, needsHistory = false, usesRange = false),
     CURRENCIES("币种分布", Icons.Outlined.CurrencyExchange, needsHistory = false, usesRange = false),
 }
@@ -194,6 +200,18 @@ fun ChartsScreen(
     }
     val monthlyExpenses = remember(data.events, categoryNames, range, quotes.fxRates) {
         monthlyExpenses(data, categoryNames, quotes.fxRates, range)
+    }
+    val dividendStats = remember(data, quotes.fxRates, range) {
+        DividendStatsCalculator.calculate(data, quotes.fxRates, range.from, range.to)
+    }
+    val dividendCategoryColors = remember(data.settings.categories) {
+        data.settings.categories.associate { it.id to categoryColor(it) }
+    }
+    val dividendInstrumentColors = remember(data.instruments, data.settings.categories) {
+        data.instruments.associate { ins ->
+            val category = data.settings.categories.firstOrNull { it.id == ins.categoryId }
+            ins.id to (category?.let(::categoryColor) ?: FolioGold)
+        }
     }
     val institutionRows = remember(snapshot.brokerValues, data.institutions) {
         institutionRows(snapshot, data)
@@ -291,6 +309,12 @@ fun ChartsScreen(
 
                 ChartType.FLOWS -> flowsContent(monthlyFlows)
                 ChartType.EXPENSES -> expensesContent(monthlyExpenses)
+
+                ChartType.DIVIDENDS -> dividendsContent(
+                    stats = dividendStats,
+                    categoryColors = dividendCategoryColors,
+                    instrumentColors = dividendInstrumentColors,
+                )
 
                 ChartType.INSTITUTIONS -> distributionContent(
                     title = "机构分布",
@@ -747,6 +771,203 @@ private fun LazyListScope.expensesContent(monthly: List<MonthExpense>) {
     }
 }
 
+private data class DividendBarRow(
+    val name: String,
+    val amountCny: BigDecimal,
+    val count: Int,
+    val color: Color,
+)
+
+private fun LazyListScope.dividendsContent(
+    stats: DividendStats,
+    categoryColors: Map<String, Color>,
+    instrumentColors: Map<String, Color>,
+) {
+    item {
+        BigValueHeader(
+            label = "区间分红合计",
+            value = formatCny(stats.totalCny),
+            color = FolioInk,
+        )
+    }
+    if (stats.count == 0) {
+        item { EmptyBlock("所选区间内没有分红事件。") }
+        return
+    }
+    item {
+        WhiteBlock {
+            SummaryLine("分红笔数", "${stats.count} 笔")
+            HorizontalDivider(color = FolioDivider)
+            stats.averagePerMonthCny?.let { average ->
+                SummaryLine("月均分红", formatCny(average))
+                HorizontalDivider(color = FolioDivider)
+            }
+            stats.largest?.let { largest ->
+                SummaryLine("单笔最大", "${formatCny(largest.amountCny)} · ${shortDate(largest.date)}")
+                HorizontalDivider(color = FolioDivider)
+            }
+            stats.latest?.let { latest ->
+                SummaryLine("最近一笔", "${shortDate(latest.date)} · ${formatCny(latest.amountCny)}")
+            }
+            if (stats.incomplete) {
+                HorizontalDivider(color = FolioDivider)
+                Text(
+                    text = "部分分红因缺少汇率未计入",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioCoral,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            }
+        }
+    }
+    item {
+        DividendBarsBlock(
+            title = "去向分布",
+            rows = listOf(
+                DividendBarRow("立即转出", stats.withdrawnCny, stats.withdrawnCount, FolioBlue),
+                DividendBarRow("留存现金", stats.retainedCny, stats.retainedCount, FolioGreen),
+            ).filter { it.count > 0 },
+            total = stats.totalCny,
+        )
+    }
+    item {
+        DividendBarsBlock(
+            title = "来源分布（类别）",
+            rows = stats.bySourceCategory.map {
+                DividendBarRow(
+                    name = it.name,
+                    amountCny = it.amountCny,
+                    count = it.count,
+                    color = categoryColors[it.id] ?: FolioMuted,
+                )
+            },
+            total = stats.totalCny,
+        )
+    }
+    item {
+        DividendBarsBlock(
+            title = "来源明细（标的）",
+            rows = stats.bySourceInstrument.map {
+                DividendBarRow(
+                    name = it.name,
+                    amountCny = it.amountCny,
+                    count = it.count,
+                    color = instrumentColors[it.id] ?: FolioMuted,
+                )
+            },
+            total = stats.totalCny,
+        )
+    }
+    item {
+        DividendBarsBlock(
+            title = "入账账户",
+            rows = stats.byDestinationAccount.map {
+                DividendBarRow(it.name, it.amountCny, it.count, FolioPurple)
+            },
+            total = stats.totalCny,
+        )
+    }
+    item {
+        DividendBarsBlock(
+            title = "月度分红",
+            rows = stats.monthly.map {
+                DividendBarRow(
+                    name = "${it.month.year} 年 ${it.month.monthValue} 月",
+                    amountCny = it.amountCny,
+                    count = it.count,
+                    color = FolioGold,
+                )
+            },
+            total = stats.totalCny,
+        )
+    }
+}
+
+@Composable
+private fun DividendBarsBlock(
+    title: String,
+    rows: List<DividendBarRow>,
+    total: BigDecimal,
+) {
+    WhiteBlock {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            SectionTitle(title)
+            rows.forEachIndexed { index, row ->
+                if (index > 0) {
+                    HorizontalDivider(color = FolioDivider)
+                }
+                DividendBarRowItem(row, total)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DividendBarRowItem(row: DividendBarRow, total: BigDecimal) {
+    val share = if (total.signum() > 0) {
+        row.amountCny.divide(total, 6, java.math.RoundingMode.HALF_UP)
+    } else {
+        BigDecimal.ZERO
+    }
+    Column(modifier = Modifier.padding(vertical = 10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(row.color),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = row.name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = FolioInk,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = formatCny(row.amountCny),
+                style = MaterialTheme.typography.titleSmall,
+                color = FolioInk,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = formatPercent(share),
+                style = MaterialTheme.typography.bodySmall,
+                color = FolioMuted,
+            )
+        }
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(
+            text = "${row.count} 笔",
+            style = MaterialTheme.typography.bodySmall,
+            color = FolioMuted,
+            modifier = Modifier.padding(start = 16.dp),
+        )
+        Spacer(modifier = Modifier.height(7.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(5.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(Color(0xFFF1F1F1)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(share.toFloat().coerceIn(0f, 1f))
+                    .fillMaxHeight()
+                    .background(row.color),
+            )
+        }
+    }
+}
+
+private fun shortDate(date: LocalDate): String = "${date.monthValue}月${date.dayOfMonth}日"
+
 private fun LazyListScope.distributionContent(
     title: String,
     rows: List<DistributionRowData>,
@@ -791,7 +1012,7 @@ private fun HistorySummary(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        BigPnlHeader(label = "区间盈亏（扣资金流）", pnl = pnl, incomplete = incomplete)
+        BigPnlHeader(label = "区间盈亏", pnl = pnl, incomplete = incomplete)
         WhiteBlock {
             Spacer(modifier = Modifier.height(4.dp))
             SummaryLine("期初", formatCny(start))

@@ -111,6 +111,36 @@ class HistoryCalculatorTest {
     }
 
     @Test
+    fun openingInsideRangeIsCapitalFlowNotPnl() {
+        val events = baseEvents() + opening(
+            ref(INST_A, FUND),
+            quantity = "5",
+            price = "12",
+            date = "2026-01-10T00:00:00+08:00",
+        )
+        val result = HistoryCalculator.build(data(events), cache(), emptyMap(), from, to)
+        val growth = result.categoryPnl.first { it.categoryId == CategoryIds.GROWTH }
+
+        // 15 shares × 12 at the end vs 10 shares × 10 at the start, minus
+        // the 5 × 12 opening inflow: only the market gain remains.
+        assertDecimal("20", growth.pnlCny)
+    }
+
+    @Test
+    fun cashOpeningInsideRangeIsCapitalFlowNotPnl() {
+        val events = baseEvents() + opening(
+            ref(INST_A, CASH_CNY),
+            amount = "500",
+            date = "2026-01-10T00:00:00+08:00",
+        )
+        val result = HistoryCalculator.build(data(events), cache(), emptyMap(), from, to)
+        val cash = result.categoryPnl.first { it.categoryId == CategoryIds.CASH }
+
+        assertDecimal("0", cash.pnlCny)
+        assertDecimal("1620", result.curve.last().totalCny)
+    }
+
+    @Test
     fun cashExpenseReducesPnl() {
         val events = baseEvents() + ExpenseEvent(
             amount = bd("10"),
