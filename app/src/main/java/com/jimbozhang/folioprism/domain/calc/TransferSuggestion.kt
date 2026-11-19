@@ -3,10 +3,12 @@ package com.jimbozhang.folioprism.domain.calc
 import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
+import com.jimbozhang.folioprism.domain.model.categoryOf
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.LocalDate
 
 /**
  * Input helpers for the transfer editor. Everything here only produces
@@ -59,6 +61,76 @@ object TransferSuggestion {
             toNative.divide(price, DIVISION_SCALE, RoundingMode.HALF_UP)
         }
         return toQuantity.setScale(to.precision.quantityDecimals, RoundingMode.DOWN)
+    }
+
+    /**
+     * Suggests how much of the source instrument to transfer OUT so that, after
+     * the transfer, the source category sits on its target share. The out leg's
+     * CNY value is D and the receive leg receives the same D.
+     *
+     * The source category's denominator reflects this transfer's effect on the
+     * dividend/portfolio split: a non-dividend source is measured against the
+     * portfolio base, which shrinks by D when the destination is a dividend
+     * category, so D solves (V0 - D) / (base - D) = p. In every other case the
+     * base is unchanged and D = V0 - p * base.
+     *
+     * Only helps when the source is currently above target; when it is at or
+     * below target the answer is zero. Returns null when the inputs or prices
+     * are insufficient to value the portfolio.
+     */
+    fun suggestRebalanceOutQuantity(
+        data: PortfolioData,
+        positions: Map<PositionKey, BigDecimal>,
+        provider: PriceProvider,
+        date: LocalDate,
+        fromInstitutionId: String?,
+        fromInstrumentId: String?,
+        toInstrumentId: String?,
+    ): BigDecimal? {
+        val fromInstrument = data.instrument(fromInstrumentId ?: return null) ?: return null
+        val fromCategory = data.categoryOf(fromInstrument.id) ?: return null
+        val toCategory = toInstrumentId?.let { data.categoryOf(it) }
+
+        // The source must be valued before the zero shortcut below: without a
+        // price its category value is unknown, not zero.
+        val fromInstitution = fromInstitutionId ?: return null
+        val fromKey = PositionKey(fromInstitution, fromInstrument.id)
+        val holding = positions[fromKey] ?: return null
+        if (holding.signum() <= 0) return null
+        val holdingValue = Valuation.valuePosition(data, fromKey, holding, provider, date)
+            ?: return null
+        if (holdingValue.signum() <= 0) return null
+
+        val snapshot = SnapshotCalculator.build(data, positions, provider, date)
+        val totalValue = snapshot.totalValueCny
+        val portfolioValue = snapshot.portfolioValueCny
+        val sourceValue = snapshot.categories
+            .firstOrNull { it.category.id == fromCategory.id }
+            ?.valueCny ?: BigDecimal.ZERO
+
+        val p = SnapshotCalculator.fraction(fromCategory.targetPct)
+        val sourceIsDividend = fromCategory.specialRule == "dividend"
+        val toIsDividend = toCategory?.specialRule == "dividend"
+        val base = if (sourceIsDividend) totalValue else portfolioValue
+        if (base.signum() <= 0) return null
+
+        val numerator = sourceValue.subtract(p.multiply(base))
+        var delta = if (!sourceIsDividend && toIsDividend) {
+            val oneMinusP = BigDecimal.ONE.subtract(p)
+            if (oneMinusP.signum() <= 0) {
+                numerator
+            } else {
+                numerator.divide(oneMinusP, DIVISION_SCALE, RoundingMode.HALF_UP)
+            }
+        } else {
+            numerator
+        }
+        if (delta.signum() <= 0) return BigDecimal.ZERO
+        if (delta > holdingValue) delta = holdingValue
+
+        return delta.multiply(holding)
+            .divide(holdingValue, DIVISION_SCALE, RoundingMode.HALF_UP)
+            .setScale(fromInstrument.precision.quantityDecimals, RoundingMode.DOWN)
     }
 
     /** Current quote (or manual price) used to prefill a price field. */
