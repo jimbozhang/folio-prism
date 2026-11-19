@@ -1,19 +1,26 @@
 package com.jimbozhang.folioprism.domain.calc
 
+import com.jimbozhang.folioprism.data.price.LivePriceProvider
 import com.jimbozhang.folioprism.domain.CASH_CNY
 import com.jimbozhang.folioprism.domain.CASH_USD
 import com.jimbozhang.folioprism.domain.FUND
+import com.jimbozhang.folioprism.domain.INST_A
 import com.jimbozhang.folioprism.domain.US_EQ
 import com.jimbozhang.folioprism.domain.assertDecimal
 import com.jimbozhang.folioprism.domain.cashInstrument
 import com.jimbozhang.folioprism.domain.portfolio
 import com.jimbozhang.folioprism.domain.quotedInstrument
+import com.jimbozhang.folioprism.domain.model.Category
 import com.jimbozhang.folioprism.domain.model.CategoryIds
+import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.QuoteConfig
 import com.jimbozhang.folioprism.domain.model.QuoteMode
+import com.jimbozhang.folioprism.domain.model.Settings
 import com.jimbozhang.folioprism.domain.money.bd
 import com.jimbozhang.folioprism.domain.quote.Quote
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
+import java.math.BigDecimal
+import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -221,5 +228,239 @@ class TransferSuggestionTest {
         assertEquals("3.5", TransferSuggestion.suggestPrice(QuoteSnapshot(), manual))
 
         assertNull(TransferSuggestion.suggestPrice(quotes, cashCny))
+    }
+
+    // --- suggestRebalanceOutQuantity ---
+
+    private val divInstrument = quotedInstrument("ins_dividend", CategoryIds.DIVIDEND, "CNY", "000003")
+    private val growth2 = quotedInstrument("ins_growth2", CategoryIds.GROWTH, "CNY", "000004")
+
+    private fun category(id: String, targetPct: String, dividend: Boolean = false) =
+        Category(
+            id = id,
+            name = id,
+            order = 0,
+            color = "#000000",
+            targetPct = bd(targetPct),
+            minPct = bd("0"),
+            maxPct = bd("100"),
+            specialRule = if (dividend) "dividend" else null,
+        )
+
+    private fun dataWithCategories(instruments: List<Instrument>, categories: List<Category>) =
+        portfolio(instruments = instruments).copy(settings = Settings(categories = categories))
+
+    private fun rebalanceProvider(prices: Map<String, BigDecimal>) =
+        LivePriceProvider(
+            QuoteSnapshot(
+                quotes = prices.mapValues { (id, price) ->
+                    Quote(id, price, "CNY", id, "", "test")
+                },
+            ),
+        )
+
+    @Test
+    fun rebalanceOutMovesSourceToTargetWhenDestIsNonDividend() {
+        // total 4000, growth 3000, target 50% -> D = 3000 - 0.5 * 4000 = 1000
+        // quantity = 1000 / 3000 * 1500 = 500
+        val data = dataWithCategories(
+            instruments = listOf(fund, cashCny),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CASH, "50"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceOutQuantity(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, FUND) to bd("1500"),
+                PositionKey(INST_A, CASH_CNY) to bd("1000"),
+            ),
+            provider = rebalanceProvider(mapOf(FUND to bd("2"))),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstrumentId = CASH_CNY,
+        )
+        assertDecimal("500", suggested)
+    }
+
+    @Test
+    fun rebalanceOutAccountsForShrinkingPortfolioBaseWhenDestIsDividend() {
+        // total 3000, no dividend value -> portfolio base 3000, growth 2000, target 30%
+        // D = (2000 - 0.3 * 3000) / (1 - 0.3) = 1100 / 0.7 = 1571.4285...
+        // quantity = 1571.4285... / 2000 * 1000 = 785.71
+        val data = dataWithCategories(
+            instruments = listOf(fund, cashCny, divInstrument),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "30"),
+                category(CategoryIds.CASH, "70"),
+                category(CategoryIds.DIVIDEND, "32", dividend = true),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceOutQuantity(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, FUND) to bd("1000"),
+                PositionKey(INST_A, CASH_CNY) to bd("1000"),
+            ),
+            provider = rebalanceProvider(mapOf(FUND to bd("2"))),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstrumentId = "ins_dividend",
+        )
+        assertDecimal("785.71", suggested)
+    }
+
+    @Test
+    fun rebalanceOutDividendSourceUsesTotalValueAsBase() {
+        // total 5000 (dividend 2000 + growth 3000), dividend target 30%
+        // D = 2000 - 0.3 * 5000 = 500 -> quantity = 500 / 2000 * 500 = 125
+        val data = dataWithCategories(
+            instruments = listOf(fund, divInstrument),
+            categories = listOf(
+                category(CategoryIds.DIVIDEND, "30", dividend = true),
+                category(CategoryIds.GROWTH, "100"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceOutQuantity(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, "ins_dividend") to bd("500"),
+                PositionKey(INST_A, FUND) to bd("1500"),
+            ),
+            provider = rebalanceProvider(mapOf("ins_dividend" to bd("4"), FUND to bd("2"))),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = "ins_dividend",
+            toInstrumentId = FUND,
+        )
+        assertDecimal("125", suggested)
+    }
+
+    @Test
+    fun rebalanceOutIsZeroWhenSourceAtOrBelowTarget() {
+        // total 2500, growth 1000, target 50% -> D = 1000 - 1250 < 0 -> fill 0
+        val data = dataWithCategories(
+            instruments = listOf(fund, cashCny),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CASH, "50"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceOutQuantity(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, FUND) to bd("500"),
+                PositionKey(INST_A, CASH_CNY) to bd("1500"),
+            ),
+            provider = rebalanceProvider(mapOf(FUND to bd("2"))),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstrumentId = CASH_CNY,
+        )
+        assertDecimal("0", suggested)
+    }
+
+    @Test
+    fun rebalanceOutIsCappedAtHoldingValue() {
+        // growth category = 3000 (fund) + 1000 (growth2), total 5000, target 10%
+        // D = 4000 - 500 = 3500 > fund value 3000 -> capped, quantity = all 1500
+        val data = dataWithCategories(
+            instruments = listOf(fund, growth2, cashCny),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "10"),
+                category(CategoryIds.CASH, "90"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceOutQuantity(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, FUND) to bd("1500"),
+                PositionKey(INST_A, "ins_growth2") to bd("100"),
+                PositionKey(INST_A, CASH_CNY) to bd("1000"),
+            ),
+            provider = rebalanceProvider(mapOf(FUND to bd("2"), "ins_growth2" to bd("10"))),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstrumentId = CASH_CNY,
+        )
+        assertDecimal("1500", suggested)
+    }
+
+    @Test
+    fun rebalanceOutReturnsNullWhenSourcePriceMissing() {
+        val data = dataWithCategories(
+            instruments = listOf(fund, cashCny),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CASH, "50"),
+            ),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceOutQuantity(
+            data = data,
+            positions = mapOf(
+                PositionKey(INST_A, FUND) to bd("1500"),
+                PositionKey(INST_A, CASH_CNY) to bd("1000"),
+            ),
+            provider = rebalanceProvider(emptyMap()),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstrumentId = CASH_CNY,
+        )
+        assertNull(suggested)
+    }
+
+    @Test
+    fun rebalanceOutReturnsNullForMissingInputs() {
+        val data = dataWithCategories(
+            instruments = listOf(fund, cashCny),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CASH, "50"),
+            ),
+        )
+        val positions = mapOf(
+            PositionKey(INST_A, FUND) to bd("1500"),
+            PositionKey(INST_A, CASH_CNY) to bd("1000"),
+        )
+        val provider = rebalanceProvider(mapOf(FUND to bd("2")))
+
+        val noInstitution = TransferSuggestion.suggestRebalanceOutQuantity(
+            data = data,
+            positions = positions,
+            provider = provider,
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = null,
+            fromInstrumentId = FUND,
+            toInstrumentId = CASH_CNY,
+        )
+        assertNull(noInstitution)
+
+        val unknownInstrument = TransferSuggestion.suggestRebalanceOutQuantity(
+            data = data,
+            positions = positions,
+            provider = provider,
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = "ins_unknown",
+            toInstrumentId = CASH_CNY,
+        )
+        assertNull(unknownInstrument)
+
+        val noFromInstrument = TransferSuggestion.suggestRebalanceOutQuantity(
+            data = data,
+            positions = positions,
+            provider = provider,
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = null,
+            toInstrumentId = CASH_CNY,
+        )
+        assertNull(noFromInstrument)
     }
 }

@@ -32,6 +32,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -119,6 +123,12 @@ internal fun TransferSection(
 
     // Seed the receive side while it is blank or still holds the last
     // suggestion. Once the user types another number, that number wins.
+    //
+    // The first pass only arms the baseline instead of recomputing: when
+    // editing, toQuantity already holds the saved value, so keep it rather
+    // than rewriting it with current quotes; arming lets later from-side
+    // edits (holding slider, quantity, prices) drive it from there.
+    var firstSuggestionPass by remember { mutableStateOf(true) }
     LaunchedEffect(
         form.fromInstitutionId,
         form.fromInstrumentId,
@@ -128,6 +138,11 @@ internal fun TransferSection(
         form.toInstrumentId,
         form.toPrice,
     ) {
+        if (firstSuggestionPass) {
+            firstSuggestionPass = false
+            form.lastSuggestedToQuantity = form.toQuantity
+            return@LaunchedEffect
+        }
         val result = TransferSuggestion.applyQuantitySuggestion(
             current = form.toQuantity,
             lastSuggested = form.lastSuggestedToQuantity,
@@ -157,6 +172,18 @@ internal fun TransferSection(
                 holding = fromHolding,
                 quantityText = form.fromQuantity,
                 decimals = fromInstrument.precision.quantityDecimals,
+                onAuto = {
+                    val auto = TransferSuggestion.suggestRebalanceOutQuantity(
+                        data = data,
+                        positions = positions,
+                        provider = LivePriceProvider(quotes),
+                        date = LocalDate.now(),
+                        fromInstitutionId = form.fromInstitutionId,
+                        fromInstrumentId = form.fromInstrumentId,
+                        toInstrumentId = form.toInstrumentId,
+                    )
+                    if (auto != null) form.fromQuantity = auto.toPlainString()
+                },
                 onQuantityChange = { form.fromQuantity = it },
             )
         }
@@ -241,6 +268,7 @@ private fun HoldingSlider(
     holding: BigDecimal,
     quantityText: String,
     decimals: Int,
+    onAuto: () -> Unit,
     onQuantityChange: (String) -> Unit,
 ) {
     val holdingFloat = holding.toFloat()
@@ -268,9 +296,9 @@ private fun HoldingSlider(
                 inactiveTrackColor = FolioDivider,
             ),
         )
-        TextButton(onClick = { onQuantityChange(holding.toPlainString()) }) {
+        TextButton(onClick = { onAuto() }) {
             Text(
-                text = "全部",
+                text = "自动",
                 style = MaterialTheme.typography.labelMedium,
                 color = FolioGold,
             )

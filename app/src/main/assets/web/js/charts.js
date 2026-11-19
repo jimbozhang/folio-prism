@@ -82,6 +82,7 @@ const ChartsView = (() => {
 
     render(root, state) {
       destroy();
+      clearNode(root);
       const current = typeDef(state.charts.type);
       const page = el('div', 'page');
 
