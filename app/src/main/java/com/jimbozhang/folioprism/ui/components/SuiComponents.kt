@@ -30,13 +30,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -337,79 +335,6 @@ fun InlineDropdown(
                     },
                     onClick = {
                         onSelected(id)
-                        expanded = false
-                    },
-                )
-            }
-        }
-    }
-}
-
-/** Compact pill dropdown used as a list filter in headers. */
-@Composable
-fun FilterDropdown(
-    selectedId: String?,
-    allId: String,
-    options: List<Pair<String, String>>,
-    onSelected: (String?) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val label = options.firstOrNull { it.first == selectedId }?.second ?: "全部类型"
-    Box(modifier = modifier) {
-        Surface(
-            shape = CircleShape,
-            color = FolioGoldSoft,
-            modifier = Modifier.clickable { expanded = true },
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.FilterList,
-                    contentDescription = null,
-                    tint = FolioGold,
-                    modifier = Modifier.size(15.dp),
-                )
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = FolioGold,
-                )
-                Icon(
-                    imageVector = Icons.Outlined.ExpandMore,
-                    contentDescription = null,
-                    tint = FolioGold,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-        }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            val items = listOf(allId to "全部类型") + options
-            items.forEach { (id, itemLabel) ->
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            text = itemLabel,
-                            color = if (selectedId == id || (id == allId && selectedId == null)) {
-                                FolioGold
-                            } else {
-                                FolioInk
-                            },
-                        )
-                    },
-                    trailingIcon = {
-                        if (selectedId == id || (id == allId && selectedId == null)) {
-                            Icon(Icons.Outlined.Check, contentDescription = null, tint = FolioGold)
-                        }
-                    },
-                    onClick = {
-                        onSelected(if (id == allId) null else id)
                         expanded = false
                     },
                 )

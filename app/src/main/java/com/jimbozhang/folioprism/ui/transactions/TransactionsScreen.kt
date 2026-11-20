@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +25,8 @@ import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.SwapHoriz
@@ -32,12 +36,14 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,7 +67,6 @@ import com.jimbozhang.folioprism.domain.model.PositionRef
 import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
-import com.jimbozhang.folioprism.ui.components.FilterDropdown
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.ui.components.formatNative
 import com.jimbozhang.folioprism.ui.components.formatQuantity
@@ -79,15 +84,6 @@ import java.time.LocalDate
 import java.time.format.TextStyle
 import java.util.Locale
 
-private val eventTypeOptions = listOf(
-    "transfer" to "转账",
-    "income" to "收益",
-    "external" to "外部",
-    "expense" to "支出",
-    "opening" to "期初",
-    "adjustment" to "调整",
-)
-
 private data class EventDay(
     val date: LocalDate,
     val events: List<Event>,
@@ -103,15 +99,25 @@ fun TransactionsScreen(
     var showEditor by remember { mutableStateOf(false) }
     var editingEvent by remember { mutableStateOf<Event?>(null) }
     var viewingEvent by remember { mutableStateOf<Event?>(null) }
-    var typeFilter by remember { mutableStateOf<String?>(null) }
+    var showFilterSheet by remember { mutableStateOf(false) }
+    // Saved individually so the filter survives bottom-tab switches.
+    var filterType by rememberSaveable { mutableStateOf<String?>(null) }
+    var filterInstitution by rememberSaveable { mutableStateOf<String?>(null) }
+    var filterInstrument by rememberSaveable { mutableStateOf<String?>(null) }
+    val filter = TransactionFilter(filterType, filterInstitution, filterInstrument)
+    val updateFilter: (TransactionFilter) -> Unit = {
+        filterType = it.type
+        filterInstitution = it.institutionId
+        filterInstrument = it.instrumentId
+    }
     val categoryNames = remember(data.settings.categories) {
         data.settings.categories.associate { it.id to it.name }
     }
     val sorted = remember(data.events) {
         data.events.sortedWith(eventComparator().reversed())
     }
-    val filtered = remember(sorted, typeFilter) {
-        if (typeFilter == null) sorted else sorted.filter { it.filterKey() == typeFilter }
+    val filtered = remember(sorted, filter) {
+        sorted.filter { filter.matches(it) }
     }
     val days = remember(filtered) {
         filtered.groupBy { it.localDate() }
@@ -142,13 +148,11 @@ fun TransactionsScreen(
                     style = MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.weight(1f),
                 )
-                FilterDropdown(
-                    selectedId = typeFilter,
-                    allId = "all",
-                    options = eventTypeOptions,
-                    onSelected = { typeFilter = it },
+                TransactionFilterButton(
+                    activeCount = filter.activeCount,
+                    onClick = { showFilterSheet = true },
                 )
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Box(
                     modifier = Modifier
                         .minimumInteractiveComponentSize()
@@ -171,6 +175,15 @@ fun TransactionsScreen(
                         )
                     }
                 }
+            }
+        }
+        if (!filter.isEmpty) {
+            item {
+                ActiveFilterRow(
+                    data = data,
+                    filter = filter,
+                    onFilterChange = updateFilter,
+                )
             }
         }
             if (filtered.isEmpty()) {
@@ -247,6 +260,122 @@ fun TransactionsScreen(
                 showEditor = false
             },
         )
+    }
+
+    if (showFilterSheet) {
+        TransactionFilterSheet(
+            data = data,
+            filter = filter,
+            resultCount = filtered.size,
+            onFilterChange = updateFilter,
+            onDismiss = { showFilterSheet = false },
+        )
+    }
+}
+
+@Composable
+private fun TransactionFilterButton(
+    activeCount: Int,
+    onClick: () -> Unit,
+) {
+    val active = activeCount > 0
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = if (active) FolioGold else FolioGoldSoft,
+        contentColor = if (active) Color(0xFF2B1D0E) else FolioGold,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.FilterList,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp),
+            )
+            Text(
+                text = if (active) "筛选 · $activeCount" else "筛选",
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/**
+ * Removable chips for the filters currently in force, so the list never hides
+ * why it is short. Wraps instead of scrolling so no chip or action is cut off.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ActiveFilterRow(
+    data: PortfolioData,
+    filter: TransactionFilter,
+    onFilterChange: (TransactionFilter) -> Unit,
+) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        filter.type?.let { type ->
+            val label = eventTypeFilterOptions.firstOrNull { it.first == type }?.second ?: type
+            ActiveFilterChip(label) { onFilterChange(filter.copy(type = null)) }
+        }
+        filter.institutionId?.let { id ->
+            val label = data.institutions.firstOrNull { it.id == id }?.name ?: id
+            ActiveFilterChip(label) { onFilterChange(filter.copy(institutionId = null)) }
+        }
+        filter.instrumentId?.let { id ->
+            val label = data.instrument(id)
+                ?.let { "${it.code} ${it.name}" }
+                ?: id
+            ActiveFilterChip(label) { onFilterChange(filter.copy(instrumentId = null)) }
+        }
+        if (filter.activeCount > 1) {
+            Text(
+                text = "清除",
+                style = MaterialTheme.typography.labelLarge,
+                color = FolioGold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { onFilterChange(TransactionFilter()) }
+                    .padding(horizontal = 6.dp, vertical = 5.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActiveFilterChip(
+    label: String,
+    onClear: () -> Unit,
+) {
+    Surface(
+        onClick = onClear,
+        shape = CircleShape,
+        color = FolioGoldSoft,
+        contentColor = FolioGold,
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 10.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Icon(
+                imageVector = Icons.Outlined.Close,
+                contentDescription = "移除筛选",
+                modifier = Modifier.size(14.dp),
+            )
+        }
     }
 }
 
@@ -399,15 +528,6 @@ internal fun eventAccent(event: Event): Color = when (event) {
     is ExpenseEvent -> FolioGreen
     is OpeningEvent -> FolioPurple
     is AdjustmentEvent -> FolioMuted
-}
-
-private fun Event.filterKey(): String = when (this) {
-    is TransferEvent -> "transfer"
-    is IncomeEvent -> "income"
-    is ExternalEvent -> "external"
-    is ExpenseEvent -> "expense"
-    is OpeningEvent -> "opening"
-    is AdjustmentEvent -> "adjustment"
 }
 
 internal fun eventTypeLabel(event: Event): String = when (event) {
