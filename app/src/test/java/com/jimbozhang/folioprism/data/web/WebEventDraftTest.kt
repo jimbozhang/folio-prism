@@ -112,6 +112,32 @@ class WebEventDraftTest {
     }
 
     @Test
+    fun transferAutoLossRoundsToTheFen() {
+        // 33768 * 1.4082 - 54326.62 * 0.8753 = 0.007114: a derived money
+        // amount is stored rounded to the fen, never with sub-cent digits.
+        val fund2 = quotedInstrument("fund2", CategoryIds.GROWTH, "CNY", "000002")
+        val data2 = portfolio(
+            institutions = listOf(Institution(INST_A, "A"), Institution(INST_B, "B")),
+            instruments = listOf(fund, fund2),
+        )
+        val draft = WebEventDraft(
+            type = "transfer",
+            date = DATE1,
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            fromQuantity = "33768",
+            fromPrice = "1.4082",
+            toInstitutionId = INST_B,
+            toInstrumentId = "fund2",
+            toQuantity = "54326.62",
+            toPrice = "0.8753",
+        )
+        val transfer = WebEventBuilder.build(data2, quotes, draft, null)
+            .getOrThrow().single() as TransferEvent
+        assertDecimal("0.01", transfer.lossAmount)
+    }
+
+    @Test
     fun transferFeeFromCashAccount() {
         val draft = WebEventDraft(
             type = "transfer",

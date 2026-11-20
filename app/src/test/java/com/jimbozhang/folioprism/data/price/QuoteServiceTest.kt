@@ -19,6 +19,8 @@ import com.jimbozhang.folioprism.domain.model.PositionRef
 import com.jimbozhang.folioprism.domain.model.QuoteConfig
 import com.jimbozhang.folioprism.domain.model.QuoteMode
 import com.jimbozhang.folioprism.domain.money.bd
+import com.jimbozhang.folioprism.domain.opening
+import com.jimbozhang.folioprism.domain.ref
 import com.jimbozhang.folioprism.domain.quote.QuoteFailureKind
 import com.jimbozhang.folioprism.domain.calc.PositionKey
 import java.math.BigDecimal
@@ -106,6 +108,25 @@ class QuoteServiceTest {
         assertDecimal("2.65", snapshot.quotes["etf"]?.price)
         assertDecimal("700.50", snapshot.quotes[US_EQ]?.price)
         assertDecimal("872.98", snapshot.quotes[GOLD]?.price)
+        assertDecimal("7.0", snapshot.fxRates["USD"])
+        assertDecimal("0.8974", snapshot.fxRates["HKD"])
+    }
+
+    @Test
+    fun fxCoversCurrenciesOnlyHeldInThePast() = runBlocking {
+        // HKD cash was held earlier (opening event) but the position is closed
+        // now; the history chart still needs the HKD rate for those dates.
+        val data = portfolio(
+            instruments = listOf(
+                cashInstrument(CASH_USD, "USD"),
+                cashInstrument("ins_cash_hkd", "HKD"),
+            ),
+            events = listOf(opening(ref(INST_A, "ins_cash_hkd"), amount = "1000")),
+        )
+        val positions = mapOf(PositionKey(INST_A, CASH_USD) to bd("100"))
+        val snapshot = QuoteService(fetcherFor(), now = { "now" }).fetch(data, positions)
+
+        assertTrue(snapshot.failures.isEmpty())
         assertDecimal("7.0", snapshot.fxRates["USD"])
         assertDecimal("0.8974", snapshot.fxRates["HKD"])
     }

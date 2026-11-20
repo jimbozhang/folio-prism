@@ -9,4 +9,7 @@ import java.math.RoundingMode
  */
 const val CNY_SCALE = 2
 
-fun BigDecimal.toCnyAmount(): BigDecimal = setScale(CNY_SCALE, RoundingMode.HALF_UP)
+/** A money amount in some currency: rounded to the currency's minor unit (2 decimals). */
+fun BigDecimal.toMoneyAmount(): BigDecimal = setScale(CNY_SCALE, RoundingMode.HALF_UP)
+
+fun BigDecimal.toCnyAmount(): BigDecimal = toMoneyAmount()

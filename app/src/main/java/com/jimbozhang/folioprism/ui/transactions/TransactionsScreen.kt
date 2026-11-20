@@ -66,6 +66,7 @@ import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.PositionRef
 import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.money.toMoneyAmount
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.ui.components.formatNative
@@ -573,7 +574,10 @@ internal fun eventAmount(data: PortfolioData, event: Event): String = when (even
             instrument.kind == InstrumentKind.CASH ->
                 formatNative(event.toQuantity, instrument.currency)
             event.toPrice != null ->
-                formatNative(event.toQuantity.multiply(event.toPrice), instrument.currency)
+                formatNative(
+                    event.toQuantity.multiply(event.toPrice).toMoneyAmount(),
+                    instrument.currency,
+                )
             else -> formatQuantity(event.toQuantity) + " " + instrument.unit
         }
     }
@@ -618,12 +622,12 @@ private fun eventSecondaryAmount(
     is TransferEvent -> {
         val parts = buildList {
             if (event.lossAmount.signum() != 0) {
-                add(signedNative(event.lossAmount, event.lossCurrency))
+                add(signedNative(event.lossAmount.toMoneyAmount(), event.lossCurrency))
             }
             val feeAmount = event.feeAmount
             val feeCurrency = event.feeCurrency
             if (feeAmount != null && feeAmount.signum() != 0 && feeCurrency != null) {
-                add(signedNative(feeAmount, feeCurrency))
+                add(signedNative(feeAmount.toMoneyAmount(), feeCurrency))
             }
         }
         if (parts.isEmpty()) {

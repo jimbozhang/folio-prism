@@ -79,7 +79,7 @@ const LedgerView = (() => {
       let sub = Fmt.quantity(event.fromQuantity) + ' ' + fromUnit + ' → ' +
         Fmt.quantity(event.toQuantity) + ' ' + toUnit;
       if (event.lossAmount && Fmt.num(event.lossAmount) !== 0) {
-        sub += ' · 损耗 ' + Fmt.native(event.lossAmount, event.lossCurrency || 'CNY');
+        sub += ' · 损耗 ' + Fmt.native(Fmt.money(event.lossAmount), event.lossCurrency || 'CNY');
       }
       return {
         title: '转出 ' + from + ' → 转入 ' + to,

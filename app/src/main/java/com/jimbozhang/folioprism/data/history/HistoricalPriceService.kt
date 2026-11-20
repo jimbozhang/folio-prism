@@ -308,17 +308,28 @@ class HistoricalPriceService(
         }
     }
 
-    private fun route(instrument: Instrument): HistorySource = when {
-        instrument.kind == InstrumentKind.CASH -> HistorySource.CASH
-        instrument.quote.mode == QuoteMode.MANUAL || instrument.quote.source == "manual" ->
-            HistorySource.MANUAL
-        instrument.code.equals("AU9999", ignoreCase = true) -> HistorySource.GOLD_SINA
-        sixDigits.matches(instrument.code) &&
-            (instrument.categoryId == CategoryIds.CN_BOND ||
-                onExchange.matches(instrument.code)) -> HistorySource.TENCENT
-        sixDigits.matches(instrument.code) -> HistorySource.FUND
-        usTicker.matches(instrument.code) -> HistorySource.US_SINA
-        else -> HistorySource.UNKNOWN
+    private fun route(instrument: Instrument): HistorySource {
+        if (instrument.kind == InstrumentKind.CASH) return HistorySource.CASH
+        if (instrument.quote.mode == QuoteMode.MANUAL || instrument.quote.source == "manual") {
+            return HistorySource.MANUAL
+        }
+        // An explicit quote source wins: e.g. a bond-category fund quoted from
+        // the fund API also needs fund history, not an exchange kline.
+        when (instrument.quote.source.trim().lowercase()) {
+            "eastmoneyfund", "fund", "fundbatch" -> return HistorySource.FUND
+            "tencentetf", "etf", "bond" -> return HistorySource.TENCENT
+            "tencentus", "us" -> return HistorySource.US_SINA
+            "au9999", "sge", "xau" -> return HistorySource.GOLD_SINA
+        }
+        return when {
+            instrument.code.equals("AU9999", ignoreCase = true) -> HistorySource.GOLD_SINA
+            sixDigits.matches(instrument.code) &&
+                (instrument.categoryId == CategoryIds.CN_BOND ||
+                    onExchange.matches(instrument.code)) -> HistorySource.TENCENT
+            sixDigits.matches(instrument.code) -> HistorySource.FUND
+            usTicker.matches(instrument.code) -> HistorySource.US_SINA
+            else -> HistorySource.UNKNOWN
+        }
     }
 
     private suspend fun fetchFundHistory(

@@ -70,6 +70,7 @@ import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.PositionRef
 import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.money.toMoneyAmount
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import com.jimbozhang.folioprism.ui.components.PositionPickerPanel
 import com.jimbozhang.folioprism.ui.components.SingleDatePickerDialog
@@ -674,7 +675,7 @@ internal fun buildEvents(
                     (fromInstrument.currency.uppercase() in setOf("CNY", "CNH") &&
                         toInstrument.currency.uppercase() in setOf("CNY", "CNH"))
             val autoLoss = if (sameCurrency) {
-                values.fromNative.subtract(values.toNative)
+                values.fromNative.subtract(values.toNative).toMoneyAmount()
             } else {
                 BigDecimal.ZERO
             }
@@ -703,7 +704,7 @@ internal fun buildEvents(
             val feeAmount = extraLoss?.let {
                 val lossFx = currentFx(lossCurrency, quotes)
                 val feeFx = currentFx(feeCashInstrument!!.currency, quotes)
-                it.multiply(lossFx).divide(feeFx, 8, RoundingMode.HALF_UP)
+                it.multiply(lossFx).divide(feeFx, 8, RoundingMode.HALF_UP).toMoneyAmount()
             }
             val feePosition =
                 if (feeCashInstrument != null && feeCashInstitutionId != null &&

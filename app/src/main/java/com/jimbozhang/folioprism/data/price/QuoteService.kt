@@ -5,6 +5,7 @@ import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.model.positionRefs
 import com.jimbozhang.folioprism.domain.quote.Quote
 import com.jimbozhang.folioprism.domain.quote.QuoteFailure
 import com.jimbozhang.folioprism.domain.quote.QuoteFailureKind
@@ -72,6 +73,18 @@ class QuoteService(
             }
         ) {
             fxCurrencies += "USD"
+        }
+        // The history chart values positions at past dates too, so a currency
+        // that was held earlier must be converted even when the position has
+        // since been closed.
+        data.events.forEach { event ->
+            event.positionRefs().forEach { ref ->
+                val instrument = data.instrument(ref.instrumentId) ?: return@forEach
+                val currency = instrument.currency.uppercase()
+                if (currency !in setOf("CNY", "CNH")) {
+                    fxCurrencies += currency
+                }
+            }
         }
 
         if (fxCurrencies.isNotEmpty()) {

@@ -13,6 +13,8 @@ import com.jimbozhang.folioprism.domain.quotedInstrument
 import com.jimbozhang.folioprism.domain.ref
 import com.jimbozhang.folioprism.domain.history.DateRange
 import com.jimbozhang.folioprism.domain.model.CategoryIds
+import com.jimbozhang.folioprism.domain.model.QuoteConfig
+import com.jimbozhang.folioprism.domain.model.QuoteMode
 import com.jimbozhang.folioprism.domain.money.bd
 import java.io.File
 import java.nio.file.Files
@@ -106,6 +108,44 @@ class HistoricalPriceServiceTest {
 
         dir.deleteRecursively()
         Unit
+    }
+
+    @Test
+    fun explicitFundSourceUsesFundHistoryEvenForBondCategory() = runBlocking {
+        // A bond-category fund quoted from the fund API must fetch fund
+        // history; the exchange kline source has no data for it.
+        val bondFund = quotedInstrument("bondfund", CategoryIds.CN_BOND, code = "006961").copy(
+            quote = QuoteConfig(mode = QuoteMode.AUTO, source = "fund"),
+        )
+        val data = portfolio(
+            instruments = listOf(bondFund),
+            events = listOf(
+                opening(
+                    ref(INST_A, "bondfund"),
+                    quantity = "10",
+                    date = "2026-01-01T00:00:00+08:00",
+                ),
+            ),
+        )
+        val fetcher = FakeFetcher { url ->
+            when {
+                url.contains("pingzhongdata/006961") -> fundJs
+                else -> null
+            }
+        }
+        val dir = Files.createTempDirectory("history-cache").toFile()
+        val repo = PriceCacheRepository(java.io.File(dir, "price-cache.json"))
+        val service = HistoricalPriceService(fetcher, repo, now = { "now" })
+
+        val result = service.fetchAndCache(
+            data = data,
+            from = LocalDate.of(2026, 1, 2),
+            to = LocalDate.of(2026, 1, 3),
+        )
+
+        assertTrue(result.logs.any { it.contains("history ok: 006961") })
+        assertFalse(result.logs.any { it.contains("history failed: 006961") })
+        assertDecimal("1.2", result.cache.quotes["bondfund"]?.auto?.get("2026-01-01")?.let(::bd))
     }
 
     /**
