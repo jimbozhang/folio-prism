@@ -50,6 +50,7 @@ import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.money.toCnyAmount
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import com.jimbozhang.folioprism.ui.components.AmountHero
 import com.jimbozhang.folioprism.ui.components.FormDivider
@@ -403,7 +404,7 @@ private fun cnyValue(
     quotes: QuoteSnapshot,
 ): BigDecimal? = when (currency.uppercase()) {
     "CNY", "CNH" -> value
-    else -> quotes.fxRates[currency.uppercase()]?.let { value.multiply(it) }
+    else -> quotes.fxRates[currency.uppercase()]?.let { value.multiply(it).toCnyAmount() }
 }
 
 @Composable

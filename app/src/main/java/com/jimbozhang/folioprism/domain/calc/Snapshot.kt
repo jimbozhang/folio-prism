@@ -6,13 +6,16 @@ import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.money.CNY_SCALE
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
 
 private val ONE_HUNDRED = BigDecimal(100)
 private const val RATIO_SCALE = 10
-private const val AMOUNT_SCALE = 10
+
+/** CNY amounts are displayed to the fen; derived target/interval values keep 2 decimals. */
+private const val AMOUNT_SCALE = CNY_SCALE
 
 data class CategorySnapshot(
     val category: Category,

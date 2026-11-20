@@ -21,6 +21,7 @@ import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.goldPremium
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.money.toCnyAmount
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import com.jimbozhang.folioprism.ui.theme.FolioInk
 import java.math.BigDecimal
@@ -45,7 +46,11 @@ fun HoldingRow(
     }
     val nativeValue = when {
         instrument.kind == InstrumentKind.CASH -> quantity
-        price != null -> quantity.multiply(price)
+        price != null -> {
+            val raw = quantity.multiply(price)
+            // A CNY-denominated market value is a CNY amount: round to the fen.
+            if (instrument.currency.uppercase() in setOf("CNY", "CNH")) raw.toCnyAmount() else raw
+        }
         else -> null
     }
     val valueText = if (nativeValue == null) {

@@ -88,6 +88,7 @@ import com.jimbozhang.folioprism.domain.model.ExternalDirection
 import com.jimbozhang.folioprism.domain.model.ExternalEvent
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.money.toCnyAmount
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import com.jimbozhang.folioprism.ui.HistoryUiState
 import com.jimbozhang.folioprism.ui.components.DateRangePickerDialog
@@ -1720,7 +1721,7 @@ private fun monthlyFlows(
             var outflow = BigDecimal.ZERO
             events.forEach { event ->
                 val amountCny = fxToCny(event.currency, fxRates)
-                    ?.let { event.amount.multiply(it) } ?: return@forEach
+                    ?.let { event.amount.multiply(it).toCnyAmount() } ?: return@forEach
                 if (event.direction == ExternalDirection.IN) {
                     inflow = inflow.add(amountCny)
                 } else {
@@ -1749,7 +1750,7 @@ private fun monthlyExpenses(
         val date = event.localDate()
         if (date.isBefore(range.from) || date.isAfter(range.to)) return@forEach
         val amountCny = fxToCny(event.currency, fxRates)
-            ?.let { event.amount.multiply(it) } ?: return@forEach
+            ?.let { event.amount.multiply(it).toCnyAmount() } ?: return@forEach
         val month = YearMonth.from(parseEventTime(event.date))
         val categories = map.getOrPut(month) { linkedMapOf() }
         val name = categoryNames[event.categoryId] ?: event.categoryId
@@ -1764,12 +1765,12 @@ private fun monthlyExpenses(
         val date = event.localDate()
         if (date.isBefore(range.from) || date.isAfter(range.to)) return@forEach
         var feeLossCny = fxToCny(event.lossCurrency, fxRates)
-            ?.let { event.lossAmount.multiply(it) } ?: BigDecimal.ZERO
+            ?.let { event.lossAmount.multiply(it).toCnyAmount() } ?: BigDecimal.ZERO
         val feeAmount = event.feeAmount
         val feeCurrency = event.feeCurrency
         if (feeAmount != null && feeCurrency != null) {
             fxToCny(feeCurrency, fxRates)?.let {
-                feeLossCny = feeLossCny.add(feeAmount.multiply(it))
+                feeLossCny = feeLossCny.add(feeAmount.multiply(it).toCnyAmount())
             }
         }
         if (feeLossCny.signum() == 0) return@forEach

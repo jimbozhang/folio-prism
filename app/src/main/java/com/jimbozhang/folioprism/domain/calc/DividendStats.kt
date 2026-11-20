@@ -4,6 +4,7 @@ import com.jimbozhang.folioprism.domain.model.IncomeEvent
 import com.jimbozhang.folioprism.domain.model.IncomeKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.money.toCnyAmount
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
@@ -98,7 +99,7 @@ object DividendStatsCalculator {
                     data.institutions.firstOrNull { it.id == event.destination.institutionId }
                 records += DividendRecord(
                     date = date,
-                    amountCny = event.amount.multiply(rate),
+                    amountCny = event.amount.multiply(rate).toCnyAmount(),
                     sourceCategoryId = sourceCategory?.id,
                     sourceCategoryName = sourceCategory?.name ?: NO_SOURCE,
                     sourceInstrumentId = sourceInstrument?.id,

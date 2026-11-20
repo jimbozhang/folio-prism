@@ -27,6 +27,12 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 
+/** FX rates are meaningful to 4 decimals; avoid carrying derived cross-rate scales. */
+private const val FX_SCALE = 4
+
+/** CNY-per-gram gold price is capped to 4 decimals so conversions do not inflate scales. */
+private const val CNY_PRICE_SCALE = 4
+
 class QuoteService(
     private val fetcher: HttpFetcher,
     private val retryCount: Int = 1,
@@ -309,7 +315,7 @@ class QuoteService(
         val rates = root.obj("rates") ?: error("rates missing")
         val cny = rates.decimal("CNY") ?: error("CNY rate missing")
         val hkd = rates.decimal("HKD") ?: error("HKD rate missing")
-        val hkdCny = cny.divide(hkd, 8, RoundingMode.HALF_UP)
+        val hkdCny = cny.divide(hkd, FX_SCALE, RoundingMode.HALF_UP)
         return mapOf("USD" to cny, "HKD" to hkdCny)
     }
 
@@ -415,9 +421,12 @@ class QuoteService(
     private suspend fun fetchGoldXau(usdCny: BigDecimal): Quote {
         val root = parseObject(getWithRetry("https://api.gold-api.com/price/XAU"))
         val usdPerOz = root.decimal("price") ?: error("price missing")
+        // Ounce -> gram conversion uses extra internal precision, then the final
+        // CNY-per-gram price is capped so the conversion does not inflate scales.
         val price = usdPerOz
             .divide(BigDecimal("31.1035"), 10, RoundingMode.HALF_UP)
             .multiply(usdCny)
+            .setScale(CNY_PRICE_SCALE, RoundingMode.HALF_UP)
         if (price.signum() <= 0) error("price <= 0")
         return Quote(
             instrumentId = "",

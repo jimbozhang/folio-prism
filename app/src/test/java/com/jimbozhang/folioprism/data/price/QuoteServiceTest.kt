@@ -107,7 +107,7 @@ class QuoteServiceTest {
         assertDecimal("700.50", snapshot.quotes[US_EQ]?.price)
         assertDecimal("872.98", snapshot.quotes[GOLD]?.price)
         assertDecimal("7.0", snapshot.fxRates["USD"])
-        assertDecimal("0.89743590", snapshot.fxRates["HKD"])
+        assertDecimal("0.8974", snapshot.fxRates["HKD"])
     }
 
     @Test
@@ -151,6 +151,7 @@ class QuoteServiceTest {
         val expected = bd("2000")
             .divide(bd("31.1035"), 10, RoundingMode.HALF_UP)
             .multiply(bd("7.0"))
+            .setScale(4, RoundingMode.HALF_UP)
         assertDecimal(expected.toPlainString(), snapshot.quotes[GOLD]?.price)
     }
 

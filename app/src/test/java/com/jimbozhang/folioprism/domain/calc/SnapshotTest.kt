@@ -96,7 +96,7 @@ class SnapshotTest {
         val dividend = snapshot.categories.first { it.category.id == CategoryIds.DIVIDEND }
 
         // Target amount at which dividend / total = 32%, with all other assets fixed.
-        assertDecimal("1712.9411764706", dividend.targetValueCny)
+        assertDecimal("1712.94", dividend.targetValueCny)
         assertDecimal("0.32", dividend.targetShare)
     }
 
@@ -108,7 +108,7 @@ class SnapshotTest {
 
         assertDecimal("240", growth.valueCny)
         assertDecimal("0.0659340659", growth.share)
-        assertDecimal("1073.6842105263", growth.targetValueCny)
+        assertDecimal("1073.68", growth.targetValueCny)
     }
 
     @Test
@@ -139,8 +139,8 @@ class SnapshotTest {
         val gold = snapshot.categories.first { it.category.id == CategoryIds.GOLD }
 
         // p * other / ((1 - p) * grams), other = 3640 - 1000 = 2640, grams = 1
-        assertDecimal("976.4383561644", gold.goldMinPriceCnyPerGram)
-        assertDecimal("1300.2985074627", gold.goldMaxPriceCnyPerGram)
+        assertDecimal("976.44", gold.goldMinPriceCnyPerGram)
+        assertDecimal("1300.30", gold.goldMaxPriceCnyPerGram)
     }
 
     @Test

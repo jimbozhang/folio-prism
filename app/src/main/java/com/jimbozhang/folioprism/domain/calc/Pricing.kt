@@ -5,6 +5,7 @@ import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.goldPremium
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.money.toCnyAmount
 import java.math.BigDecimal
 import java.time.LocalDate
 
@@ -49,6 +50,8 @@ object Valuation {
 
     /**
      * Returns the position value in CNY, or null when a required price/FX is missing.
+     * The value is a CNY amount and is rounded to the fen (2 decimals); quantity and
+     * native-currency amounts stay exact at their own precision.
      */
     fun valuePosition(
         data: PortfolioData,
@@ -60,7 +63,7 @@ object Valuation {
         val instrument = data.instrument(key.instrumentId) ?: return null
         val fx = fxToCny(instrument.currency, provider) ?: return null
 
-        return when (instrument.kind) {
+        val raw = when (instrument.kind) {
             InstrumentKind.CASH -> quantity.multiply(fx)
 
             InstrumentKind.QUOTED -> {
@@ -71,5 +74,6 @@ object Valuation {
                 quantity.multiply(effectivePrice).multiply(fx)
             }
         }
+        return raw.toCnyAmount()
     }
 }

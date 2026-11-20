@@ -16,6 +16,7 @@ import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.QuoteMode
 import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.money.toCnyAmount
 import java.math.BigDecimal
 import java.time.LocalDate
 
@@ -105,8 +106,8 @@ object HistoryCalculator {
                         fromPrice = event.fromPrice,
                         toPrice = event.toPrice,
                     )
-                    val fromValueCny = fromFx?.let { values.fromNative.multiply(it) }
-                    val toValueCny = toFx?.let { values.toNative.multiply(it) }
+                    val fromValueCny = fromFx?.let { values.fromNative.multiply(it).toCnyAmount() }
+                    val toValueCny = toFx?.let { values.toNative.multiply(it).toCnyAmount() }
                     val fromCategory = fromInstrument?.categoryId
                     val toCategory = toInstrument?.categoryId
                     if (fromValueCny != null && toValueCny != null &&
@@ -120,7 +121,7 @@ object HistoryCalculator {
                     // An extra fee paid from a separate cash account is already
                     // reflected in that cash balance, so it is not added here.
                     val lossFx = fx(event.lossCurrency, provider)
-                    val embeddedLoss = lossFx?.let { event.lossAmount.multiply(it) }
+                    val embeddedLoss = lossFx?.let { event.lossAmount.multiply(it).toCnyAmount() }
                     if (embeddedLoss != null && event.id !in linkedFeeTransfers &&
                         embeddedLoss.signum() != 0
                     ) {
@@ -142,7 +143,7 @@ object HistoryCalculator {
                     val destinationCategory =
                         data.instrument(event.destination.instrumentId)?.categoryId
                     val amountCny = fx(event.currency, provider)
-                        ?.let { event.amount.multiply(it) }
+                        ?.let { event.amount.multiply(it).toCnyAmount() }
                     if (amountCny != null && sourceCategory != null &&
                         destinationCategory != null && sourceCategory != destinationCategory
                     ) {
@@ -154,7 +155,7 @@ object HistoryCalculator {
                 is ExternalEvent -> {
                     val category = data.instrument(event.position.instrumentId)?.categoryId
                     val amountCny = fx(event.currency, provider)
-                        ?.let { event.amount.multiply(it) }
+                        ?.let { event.amount.multiply(it).toCnyAmount() }
                     if (category != null && amountCny != null) {
                         val signed = if (event.direction == ExternalDirection.IN) {
                             amountCny
@@ -167,7 +168,7 @@ object HistoryCalculator {
 
                 is ExpenseEvent -> {
                     val amountCny = fx(event.currency, provider)
-                        ?.let { event.amount.multiply(it) }
+                        ?.let { event.amount.multiply(it).toCnyAmount() }
                     if (amountCny == null) {
                         return@forEach
                     }
@@ -189,9 +190,9 @@ object HistoryCalculator {
                     val rate = instrument?.let { fx(it.currency, provider) }
                     val value = when {
                         rate == null -> null
-                        event.deltaAmount != null -> event.deltaAmount.multiply(rate)
+                        event.deltaAmount != null -> event.deltaAmount.multiply(rate).toCnyAmount()
                         event.deltaQuantity != null && event.price != null ->
-                            event.deltaQuantity.multiply(event.price).multiply(rate)
+                            event.deltaQuantity.multiply(event.price).multiply(rate).toCnyAmount()
                         else -> null
                     }
                     if (category != null && value != null) {
@@ -219,7 +220,7 @@ object HistoryCalculator {
                             else -> event.amount
                         }
                         if (native != null) {
-                            add(flows, category, native.multiply(rate))
+                            add(flows, category, native.multiply(rate).toCnyAmount())
                         }
                     }
                 }

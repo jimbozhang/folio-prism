@@ -1,5 +1,7 @@
-/* Number/date formatting. Money values arrive as decimal strings; they are
- * converted to numbers only for display and chart drawing. */
+/* Number/date formatting. Money values arrive as decimal strings and are
+ * displayed with exactly the digits they carry — no rounding — so small
+ * residues stay visible and traceable. Values that only exist as JS numbers
+ * fall back to a 2-decimal format. */
 const Fmt = (() => {
   const fmt2 = new Intl.NumberFormat('zh-CN', {
     minimumFractionDigits: 2,
@@ -14,7 +16,23 @@ const Fmt = (() => {
     return Number.isFinite(n) ? n : null;
   }
 
+  /* Exact decimal rendering of a plain decimal string: keeps every digit,
+   * adds thousands separators, adds no digits. */
+  function exact(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const s = String(value);
+    if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+    let body = s;
+    if (body[0] === '-') body = body.slice(1);
+    const dot = body.indexOf('.');
+    const int = dot === -1 ? body : body.slice(0, dot);
+    const frac = dot === -1 ? '' : body.slice(dot);
+    return (s[0] === '-' ? '-' : '') + int.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + frac;
+  }
+
   function cny(value) {
+    const t = exact(value);
+    if (t !== null) return '¥' + t;
     const n = num(value);
     return n === null ? '--' : '¥' + fmt2.format(n);
   }
@@ -22,7 +40,10 @@ const Fmt = (() => {
   function plain(value, digits) {
     const n = num(value);
     if (n === null) return '--';
-    if (digits === undefined) return fmt2.format(n);
+    if (digits === undefined) {
+      const t = exact(n);
+      return t !== null ? t : fmt2.format(n);
+    }
     return n.toFixed(digits);
   }
 
@@ -39,11 +60,18 @@ const Fmt = (() => {
   }
 
   function quantity(value) {
+    const t = exact(value);
+    if (t !== null) return t;
     const n = num(value);
     return n === null ? '--' : fmt2.format(n);
   }
 
   function native(value, currency) {
+    const t = exact(value);
+    if (t !== null) {
+      const prefix = currency === 'USD' ? '$' : currency === 'HKD' ? 'HK$' : '¥';
+      return prefix + t;
+    }
     const n = num(value);
     if (n === null) return '--';
     const prefix = currency === 'USD' ? '$' : currency === 'HKD' ? 'HK$' : '¥';

@@ -86,6 +86,20 @@ class WebPortfolioApiTest {
     }
 
     @Test
+    fun overviewKeepsDustPositionsVisible() {
+        // 0.0001 USD at 7.2 CNY/USD rounds to 0.00 CNY, but the quantity is not
+        // zero: the position must stay visible with its exact native quantity.
+        val env = environment(baseData(opening(ref(INST_A, CASH_USD), amount = "0.0001")))
+        val overview = runBlocking { env.api.overview() }
+
+        val dust = overview.positions.first { it.instrumentId == CASH_USD }
+        assertEquals("0.0001", dust.quantity)
+        assertEquals("0.00", dust.valueCny)
+        assertEquals(3, overview.positions.size)
+        assertDecimal("120", overview.totalValueCny.toBigDecimal())
+    }
+
+    @Test
     fun portfolioReturnsStoredFile() {
         val env = environment()
         val text = runBlocking { env.api.portfolio() }

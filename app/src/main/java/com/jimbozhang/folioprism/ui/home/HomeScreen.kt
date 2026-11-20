@@ -61,7 +61,6 @@ import com.jimbozhang.folioprism.domain.calc.PortfolioSnapshot
 import com.jimbozhang.folioprism.domain.calc.PositionKey
 import com.jimbozhang.folioprism.domain.calc.RangeBarWindow
 import com.jimbozhang.folioprism.domain.calc.SnapshotCalculator
-import com.jimbozhang.folioprism.domain.calc.Valuation
 import com.jimbozhang.folioprism.domain.model.Category
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
@@ -938,6 +937,7 @@ private fun goldPriceLabel(
     val usdPerOunce = cnyPerGram
         .multiply(TROY_OUNCE_GRAMS)
         .divide(rate, 10, RoundingMode.HALF_UP)
+        .setScale(2, RoundingMode.HALF_UP)
     return formatNative(usdPerOunce, "USD") + "/盎司"
 }
 
