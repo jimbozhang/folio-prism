@@ -78,6 +78,7 @@ import com.jimbozhang.folioprism.domain.calc.SnapshotCalculator
 import com.jimbozhang.folioprism.domain.calc.localDate
 import com.jimbozhang.folioprism.domain.calc.parseEventTime
 import com.jimbozhang.folioprism.domain.history.CategoryPnl
+import com.jimbozhang.folioprism.domain.history.DailyFlow
 import com.jimbozhang.folioprism.domain.history.DateRange
 import com.jimbozhang.folioprism.domain.history.DailyPortfolioValue
 import com.jimbozhang.folioprism.domain.model.Category
@@ -106,6 +107,7 @@ import com.jimbozhang.folioprism.ui.theme.FolioInk
 import com.jimbozhang.folioprism.ui.theme.FolioMuted
 import com.jimbozhang.folioprism.ui.theme.FolioPurple
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.YearMonth
 
@@ -589,8 +591,22 @@ private fun LazyListScope.assetsContent(
 
     when {
         ready != null -> {
-            item { HistorySummary(ready.result.curve, ready.result.categoryPnl) }
-            item { HistoryLineChart(ready.result.curve) }
+            item {
+                HistorySummary(
+                    curve = ready.result.curve,
+                    flows = ready.result.dailyFlows,
+                    categoryId = null,
+                    categoryPnl = ready.result.categoryPnl,
+                )
+            }
+            item {
+                AssetChartSection(
+                    curve = ready.result.curve,
+                    adjustedCurve = ready.result.adjustedCurve,
+                    flows = ready.result.dailyFlows,
+                    categoryId = null,
+                )
+            }
         }
 
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
@@ -618,7 +634,7 @@ private fun LazyListScope.categoryAssetsContent(
         ready != null -> {
             val pnl = ready.result.categoryPnl.firstOrNull { it.categoryId == categoryId }
                 ?: CategoryPnl(categoryId, categoryName, null, true)
-            val curve = ready.result.curve.map { point ->
+            fun categoryStream(points: List<DailyPortfolioValue>) = points.map { point ->
                 DailyPortfolioValue(
                     date = point.date,
                     totalCny = point.categoryValues[categoryId],
@@ -626,8 +642,10 @@ private fun LazyListScope.categoryAssetsContent(
                     incomplete = point.categoryValues[categoryId] == null && point.incomplete,
                 )
             }
-            item { HistorySummary(curve, listOf(pnl)) }
-            item { HistoryLineChart(curve) }
+            val curve = categoryStream(ready.result.curve)
+            val adjusted = categoryStream(ready.result.adjustedCurve)
+            item { HistorySummary(curve, ready.result.dailyFlows, categoryId, listOf(pnl)) }
+            item { AssetChartSection(curve, adjusted, ready.result.dailyFlows, categoryId) }
         }
 
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
@@ -1000,6 +1018,8 @@ private fun LazyListScope.distributionContent(
 @Composable
 private fun HistorySummary(
     curve: List<DailyPortfolioValue>,
+    flows: List<DailyFlow>,
+    categoryId: String?,
     categoryPnl: List<CategoryPnl>,
 ) {
     val start = curve.firstOrNull { it.totalCny != null }?.totalCny
@@ -1012,21 +1032,154 @@ private fun HistorySummary(
         null
     }
 
+    // Non-market flows inside the range: external money for the whole
+    // portfolio, external plus cross-category movement for one category.
+    var inflow = BigDecimal.ZERO
+    var outflow = BigDecimal.ZERO
+    flows.forEach { flow ->
+        val amounts = if (categoryId == null) {
+            flow.externalByCategory.values
+        } else {
+            // A day can have offsetting entries (a dividend arriving and being
+            // withdrawn immediately); count both, not just their net.
+            listOfNotNull(
+                flow.externalByCategory[categoryId]?.takeIf { it.signum() != 0 },
+                flow.internalByCategory[categoryId]?.takeIf { it.signum() != 0 },
+            )
+        }
+        amounts.forEach { amount ->
+            if (amount.signum() > 0) {
+                inflow = inflow.add(amount)
+            } else if (amount.signum() < 0) {
+                outflow = outflow.add(amount.abs())
+            }
+        }
+    }
+    val netFlow = inflow.subtract(outflow)
+    val marketPnl = change?.subtract(netFlow)
+    val flowLabel = if (categoryId == null) "出入金" else "资金流"
+    val flowSub = if (categoryId == null) {
+        "入金 ${formatCny(inflow)} · 出金 ${formatCny(outflow)}"
+    } else {
+        "流入 ${formatCny(inflow)} · 流出 ${formatCny(outflow)}"
+    }
+    val marketColor = when {
+        marketPnl == null || marketPnl.signum() == 0 -> FolioInk
+        marketPnl.signum() > 0 -> FolioGreen
+        else -> FolioCoral
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         BigPnlHeader(label = "区间盈亏", pnl = pnl, incomplete = incomplete)
         WhiteBlock {
             Spacer(modifier = Modifier.height(4.dp))
             SummaryLine("期初", formatCny(start))
             HorizontalDivider(color = FolioDivider)
-            SummaryLine("期末", formatCny(end))
+            SummaryLine(flowLabel, formatCny(netFlow), sub = flowSub)
             HorizontalDivider(color = FolioDivider)
-            SummaryLine("曲线变化（含资金流）", formatCny(change), emphasize = true)
+            SummaryLine(
+                label = "市场盈亏",
+                value = formatCny(marketPnl),
+                sub = "价格 + 分红 − 费用",
+                color = marketColor,
+            )
+            HorizontalDivider(color = FolioDivider)
+            SummaryLine("期末", formatCny(end), emphasize = true)
         }
     }
 }
 
+/**
+ * The asset curve with its flow markers, plus a toggle between the actual
+ * asset curve and the flow-adjusted ("market only") one.
+ */
 @Composable
-private fun HistoryLineChart(curve: List<DailyPortfolioValue>) {
+private fun AssetChartSection(
+    curve: List<DailyPortfolioValue>,
+    adjustedCurve: List<DailyPortfolioValue>,
+    flows: List<DailyFlow>,
+    categoryId: String?,
+) {
+    var marketOnly by rememberSaveable { mutableStateOf(false) }
+    var showMarkers by rememberSaveable { mutableStateOf(false) }
+    val hasAdjusted = adjustedCurve.isNotEmpty()
+    val display = if (marketOnly && hasAdjusted) adjustedCurve else curve
+    val rangeReturn = if (marketOnly) adjustedReturn(adjustedCurve) else null
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ChartModeChip(
+                label = "含资金流",
+                selected = !marketOnly,
+                onClick = { marketOnly = false },
+            )
+            ChartModeChip(
+                label = "剔除资金流",
+                selected = marketOnly,
+                onClick = { marketOnly = true },
+            )
+            ChartModeChip(
+                label = "资金标记",
+                selected = showMarkers,
+                onClick = { showMarkers = !showMarkers },
+            )
+        }
+        if (rangeReturn != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                Text(
+                    text = "区间市场收益 " + formatPercent(rangeReturn),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = pnlColor(rangeReturn),
+                )
+            }
+        }
+        HistoryLineChart(display, flows, categoryId, showMarkers)
+    }
+}
+
+@Composable
+private fun ChartModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) Color(0xFFFDEFD8) else Color(0xFFF3F4F3))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (selected) FolioGold else FolioMuted,
+        )
+    }
+}
+
+/** Total market return of a flow-adjusted curve, as a fraction. */
+private fun adjustedReturn(curve: List<DailyPortfolioValue>): BigDecimal? {
+    val first = curve.firstOrNull { it.totalCny != null }?.totalCny ?: return null
+    val last = curve.lastOrNull { it.totalCny != null }?.totalCny ?: return null
+    if (first.signum() <= 0) return null
+    return last.subtract(first).divide(first, 6, RoundingMode.HALF_UP)
+}
+
+@Composable
+private fun HistoryLineChart(
+    curve: List<DailyPortfolioValue>,
+    flows: List<DailyFlow> = emptyList(),
+    categoryId: String? = null,
+    showMarkers: Boolean = false,
+) {
     val values = curve.mapNotNull { it.totalCny }
     if (values.isEmpty()) {
         EmptyBlock("没有可用的历史价格，暂时无法绘制曲线。")
@@ -1041,6 +1194,41 @@ private fun HistoryLineChart(curve: List<DailyPortfolioValue>) {
     val flat = maxFloat - minFloat <= 0f
     val span = if (flat) 1f else maxFloat - minFloat
     val singlePoint = values.size == 1
+    // Days with a non-market change: external money gets an arrow, movement
+    // between categories gets a neutral diamond.
+    // One marker per day with a non-market change. For a single category any
+    // money arriving (from outside or from another category) is an inflow, so
+    // no separate "reallocation" marker is needed; the total curve only counts
+    // money crossing the portfolio boundary.
+    val flowMarkers = remember(flows, categoryId, showMarkers) {
+        if (!showMarkers) {
+            return@remember emptyMap<LocalDate, BigDecimal>()
+        }
+        flows.mapNotNull { flow ->
+            val net = if (categoryId == null) flow.netTotal else flow.netFor(categoryId)
+            val anyChange = if (categoryId == null) {
+                net.signum() != 0
+            } else {
+                (flow.externalByCategory[categoryId]?.signum() ?: 0) != 0 ||
+                    (flow.internalByCategory[categoryId]?.signum() ?: 0) != 0
+            }
+            if (!anyChange) {
+                null
+            } else {
+                // Same-day opposite entries cancel in the net; fall back to the
+                // external leg so the day still shows a direction.
+                val direction = when {
+                    net.signum() != 0 -> net
+                    categoryId != null ->
+                        flow.externalByCategory[categoryId]
+                            ?: flow.internalByCategory.getValue(categoryId)
+                    else -> net
+                }
+                flow.date to direction
+            }
+        }.toMap()
+    }
+    val hasMarkers = flowMarkers.isNotEmpty()
 
     WhiteBlock {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
@@ -1124,6 +1312,37 @@ private fun HistoryLineChart(curve: List<DailyPortfolioValue>) {
                     segment.add(Offset(x, y))
                 }
                 flushSegment()
+
+                // Flow markers sit on the bottom edge so they never cover the
+                // curve; an up arrow is money in, a down arrow money out.
+                val markerBaseY = bottom - 2.dp.toPx()
+                val arrowHeight = 7.dp.toPx()
+                val arrowHalfWidth = 4.dp.toPx()
+                curve.forEachIndexed { index, point ->
+                    val marker = flowMarkers[point.date] ?: return@forEachIndexed
+                    val x = if (singlePoint) {
+                        padding + chartWidth / 2f
+                    } else {
+                        padding + stepX * index
+                    }
+                    if (marker.signum() > 0) {
+                        val path = Path().apply {
+                            moveTo(x, markerBaseY - arrowHeight)
+                            lineTo(x + arrowHalfWidth, markerBaseY)
+                            lineTo(x - arrowHalfWidth, markerBaseY)
+                            close()
+                        }
+                        drawPath(path, color = FolioGreen)
+                    } else {
+                        val path = Path().apply {
+                            moveTo(x, markerBaseY)
+                            lineTo(x + arrowHalfWidth, markerBaseY - arrowHeight)
+                            lineTo(x - arrowHalfWidth, markerBaseY - arrowHeight)
+                            close()
+                        }
+                        drawPath(path, color = FolioCoral)
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(10.dp))
             Row(
@@ -1148,6 +1367,21 @@ private fun HistoryLineChart(curve: List<DailyPortfolioValue>) {
             ) {
                 Text("最低 ${formatCny(minValue)}", style = MaterialTheme.typography.bodySmall, color = FolioMuted)
                 Text("最高 ${formatCny(maxValue)}", style = MaterialTheme.typography.bodySmall, color = FolioMuted)
+            }
+            if (hasMarkers) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(
+                        text = if (categoryId == null) "▲ 入金" else "▲ 流入",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FolioGreen,
+                    )
+                    Text(
+                        text = if (categoryId == null) "▼ 出金" else "▼ 流出",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FolioCoral,
+                    )
+                }
             }
         }
     }
@@ -1542,19 +1776,33 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun SummaryLine(label: String, value: String, emphasize: Boolean = false) {
+private fun SummaryLine(
+    label: String,
+    value: String,
+    emphasize: Boolean = false,
+    sub: String? = null,
+    color: Color = FolioInk,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (emphasize) FolioInk else FolioMuted,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (emphasize) FolioInk else FolioMuted,
+            )
+            if (sub != null) {
+                Text(
+                    text = sub,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FolioMuted,
+                )
+            }
+        }
         Text(
             text = value,
             style = if (emphasize) {
@@ -1562,7 +1810,7 @@ private fun SummaryLine(label: String, value: String, emphasize: Boolean = false
             } else {
                 MaterialTheme.typography.bodyMedium
             },
-            color = FolioInk,
+            color = color,
         )
     }
 }
