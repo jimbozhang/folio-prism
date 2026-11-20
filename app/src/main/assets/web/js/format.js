@@ -16,18 +16,22 @@ const Fmt = (() => {
     return Number.isFinite(n) ? n : null;
   }
 
-  /* Exact decimal rendering of a plain decimal string: keeps every digit,
-   * adds thousands separators, adds no digits. */
+  /* Exact decimal rendering of a plain decimal string: keeps every
+   * significant digit, adds thousands separators, adds no digits and drops
+   * trailing fraction zeros (598.70 -> 598.7, 3160.00 -> 3,160). */
   function exact(value) {
     if (value === null || value === undefined || value === '') return null;
     const s = String(value);
     if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
-    let body = s;
-    if (body[0] === '-') body = body.slice(1);
+    const neg = s[0] === '-';
+    const body = neg ? s.slice(1) : s;
     const dot = body.indexOf('.');
     const int = dot === -1 ? body : body.slice(0, dot);
-    const frac = dot === -1 ? '' : body.slice(dot);
-    return (s[0] === '-' ? '-' : '') + int.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + frac;
+    const frac = dot === -1 ? '' : body.slice(dot + 1).replace(/0+$/, '');
+    const isZero = /^0*$/.test(int) && frac === '';
+    return (neg && !isZero ? '-' : '') +
+      int.replace(/\B(?=(\d{3})+(?!\d))/g, ',') +
+      (frac === '' ? '' : '.' + frac);
   }
 
   function cny(value) {
@@ -35,6 +39,80 @@ const Fmt = (() => {
     if (t !== null) return '¥' + t;
     const n = num(value);
     return n === null ? '--' : '¥' + fmt2.format(n);
+  }
+
+  /* Compact CNY amount for chart annotations: 亿 / 万 units keep labels short. */
+  function cnyCompact(value) {
+    const n = num(value);
+    if (n === null) return '--';
+    const sign = n < 0 ? '-' : '';
+    const abs = Math.abs(n);
+    let body;
+    if (abs >= 1e8) body = trimZeros((abs / 1e8).toFixed(2)) + '亿';
+    else if (abs >= 1e4) body = trimZeros((abs / 1e4).toFixed(1)) + '万';
+    else body = Math.round(abs).toLocaleString('zh-CN');
+    return sign + '¥' + body;
+  }
+
+  function trimZeros(s) {
+    return s.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  }
+
+  /* ---- Exact decimal arithmetic on decimal strings (BigInt based) ---- */
+
+  function decParts(value) {
+    const s = String(value);
+    if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+    const neg = s[0] === '-';
+    const body = neg ? s.slice(1) : s;
+    const dot = body.indexOf('.');
+    return {
+      neg: neg,
+      int: dot === -1 ? body : body.slice(0, dot),
+      frac: dot === -1 ? '' : body.slice(dot + 1),
+    };
+  }
+
+  function scaledBigInt(parts, scale) {
+    const raw = BigInt((parts.int + parts.frac.padEnd(scale, '0')) || '0');
+    return parts.neg ? -raw : raw;
+  }
+
+  function formatScaled(value, scale) {
+    const neg = value < 0n;
+    let body = (neg ? -value : value).toString().padStart(scale + 1, '0');
+    if (scale > 0) {
+      body = body.slice(0, -scale) + '.' + body.slice(-scale);
+      body = body.replace(/0+$/, '').replace(/\.$/, '');
+    }
+    return (neg && /[1-9]/.test(body) ? '-' : '') + body;
+  }
+
+  /* Exact product of two decimal strings, e.g. mul('150', '650.71'). */
+  function mul(a, b) {
+    const pa = decParts(a);
+    const pb = decParts(b);
+    if (pa === null || pb === null) return null;
+    const scale = pa.frac.length + pb.frac.length;
+    const product = scaledBigInt(pa, pa.frac.length) * scaledBigInt(pb, pb.frac.length);
+    return formatScaled(product, scale);
+  }
+
+  /* Exact sum of two decimal strings. */
+  function add(a, b) {
+    const pa = decParts(a);
+    const pb = decParts(b);
+    if (pa === null || pb === null) return null;
+    const scale = Math.max(pa.frac.length, pb.frac.length);
+    return formatScaled(scaledBigInt(pa, scale) + scaledBigInt(pb, scale), scale);
+  }
+
+  /* Exact sum of a list of decimal strings. */
+  function sum(values) {
+    return values.reduce(function (acc, v) {
+      const added = add(acc, v);
+      return added === null ? acc : added;
+    }, '0');
   }
 
   function plain(value, digits) {
@@ -142,8 +220,8 @@ const Fmt = (() => {
   }
 
   return {
-    num, cny, plain, percent, pctPoints, quantity,
-    native, signedNative, bytes, datePart, timePart, timestamp,
+    num, cny, cnyCompact, plain, percent, pctPoints, quantity,
+    native, signedNative, mul, add, sum, bytes, datePart, timePart, timestamp,
     nowLocal, datetimeLocal, dateLabel,
   };
 })();
