@@ -113,6 +113,23 @@ class QuoteServiceTest {
     }
 
     @Test
+    fun extraInstrumentWithoutPositionIsQuoted() = runBlocking {
+        // A newly added fund has no position yet, but the transfer editor
+        // needs its price before the first transaction exists.
+        val fund = quotedInstrument(FUND, CategoryIds.GROWTH, code = "008163")
+        val data = portfolio(
+            instruments = listOf(cashInstrument(CASH_CNY, "CNY"), fund),
+        )
+        val fetcher = fetcherFor()
+        val snapshot = QuoteService(fetcher, now = { "now" })
+            .fetch(data, emptyMap(), extraInstruments = listOf(fund))
+
+        assertTrue(snapshot.failures.isEmpty())
+        assertDecimal("1.0791", snapshot.quotes[FUND]?.price)
+        assertTrue(fetcher.requests.any { it.contains("Fcodes=008163") })
+    }
+
+    @Test
     fun fxCoversCurrenciesOnlyHeldInThePast() = runBlocking {
         // HKD cash was held earlier (opening event) but the position is closed
         // now; the history chart still needs the HKD rate for those dates.

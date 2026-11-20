@@ -257,10 +257,23 @@ fun EventEditorDialog(
     initial: Event?,
     onDismiss: () -> Unit,
     onDelete: (() -> Unit)? = null,
+    onRequestQuote: (Instrument) -> Unit = {},
     onSave: (List<Event>) -> Unit,
 ) {
     val form = remember(initial?.id) { EventForm(initial, data) }
     val dialogView = LocalView.current
+    // A quote requested for a newly added instrument arrives asynchronously;
+    // fill the price fields once it is available, never overwriting typing.
+    LaunchedEffect(quotes) {
+        val from = form.fromInstrumentId?.let(data::instrument)
+        if (from?.kind == InstrumentKind.QUOTED && form.fromPrice.isBlank()) {
+            TransferSuggestion.suggestPrice(quotes, from)?.let { form.fromPrice = it }
+        }
+        val to = form.toInstrumentId?.let(data::instrument)
+        if (to?.kind == InstrumentKind.QUOTED && form.toPrice.isBlank()) {
+            TransferSuggestion.suggestPrice(quotes, to)?.let { form.toPrice = it }
+        }
+    }
     // The editor is a full-screen Dialog window; make sure it resizes for the
     // IME so focused fields and the save bar are never hidden by the keyboard.
     LaunchedEffect(dialogView) {
@@ -383,7 +396,15 @@ fun EventEditorDialog(
 
                 val target = picker
                 if (target != null) {
-                    val config = pickerConfig(target, data, quotes, form, cashInstruments, initial)
+                    val config = pickerConfig(
+                        target = target,
+                        data = data,
+                        quotes = quotes,
+                        form = form,
+                        cashInstruments = cashInstruments,
+                        initial = initial,
+                        onRequestQuote = onRequestQuote,
+                    )
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -526,6 +547,7 @@ private fun pickerConfig(
     form: EventForm,
     cashInstruments: List<Instrument>,
     initial: Event?,
+    onRequestQuote: (Instrument) -> Unit,
 ): PickerConfig {
     return when (target) {
         PickerTarget.TRANSFER_FROM -> PickerConfig(
@@ -540,10 +562,11 @@ private fun pickerConfig(
             val instrument = data.instrument(instrumentId)
             // A new instrument always refills the price with its own quote;
             // whatever the user types afterwards wins.
-            form.fromPrice = if (instrument?.kind == InstrumentKind.QUOTED) {
-                TransferSuggestion.suggestPrice(quotes, instrument) ?: ""
-            } else {
-                ""
+            val suggested = TransferSuggestion.suggestPrice(quotes, instrument)
+            form.fromPrice = if (instrument?.kind == InstrumentKind.QUOTED) suggested ?: "" else ""
+            if (instrument?.kind == InstrumentKind.QUOTED && suggested == null) {
+                // Just added and never quoted: fetch its price on demand.
+                onRequestQuote(instrument)
             }
         }
 
@@ -556,10 +579,10 @@ private fun pickerConfig(
             form.toInstitutionId = institutionId
             form.toInstrumentId = instrumentId
             val instrument = data.instrument(instrumentId)
-            form.toPrice = if (instrument?.kind == InstrumentKind.QUOTED) {
-                TransferSuggestion.suggestPrice(quotes, instrument) ?: ""
-            } else {
-                ""
+            val suggested = TransferSuggestion.suggestPrice(quotes, instrument)
+            form.toPrice = if (instrument?.kind == InstrumentKind.QUOTED) suggested ?: "" else ""
+            if (instrument?.kind == InstrumentKind.QUOTED && suggested == null) {
+                onRequestQuote(instrument)
             }
         }
 

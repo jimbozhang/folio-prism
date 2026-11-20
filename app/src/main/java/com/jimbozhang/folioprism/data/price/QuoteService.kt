@@ -41,16 +41,27 @@ class QuoteService(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * Fetches quotes for the held positions plus any [extraInstruments] that
+     * have no position yet — e.g. an instrument just added, whose price the
+     * transfer editor needs before the first transaction exists.
+     */
     suspend fun fetch(
         data: PortfolioData,
         positions: Map<PositionKey, BigDecimal>,
+        extraInstruments: List<Instrument> = emptyList(),
     ): QuoteSnapshot = coroutineScope {
         val logs = mutableListOf<String>()
         val failures = mutableListOf<QuoteFailure>()
         val quotes = linkedMapOf<String, Quote>()
         val fxRates = linkedMapOf<String, BigDecimal>()
 
-        val required = requiredInstruments(data, positions, logs)
+        val required = requiredInstruments(data, positions, logs).toMutableList()
+        extraInstruments.forEach { instrument ->
+            if (required.none { it.instrument.id == instrument.id }) {
+                required += RequiredInstrument(instrument = instrument, institutionIds = emptyList())
+            }
+        }
         if (required.isEmpty()) {
             return@coroutineScope QuoteSnapshot(logs = logs)
         }

@@ -68,6 +68,7 @@ import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.money.toMoneyAmount
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
+import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.ui.components.formatNative
 import com.jimbozhang.folioprism.ui.components.formatQuantity
@@ -95,6 +96,7 @@ fun TransactionsScreen(
     data: PortfolioData,
     quotes: QuoteSnapshot,
     onUpdateData: ((PortfolioData) -> PortfolioData) -> Unit,
+    onRequestQuote: (Instrument) -> Unit = {},
     contentPadding: PaddingValues,
 ) {
     var showEditor by remember { mutableStateOf(false) }
@@ -238,6 +240,7 @@ fun TransactionsScreen(
             quotes = quotes,
             initial = editingEvent,
             onDismiss = { showEditor = false },
+            onRequestQuote = onRequestQuote,
             onDelete = editingEvent?.let { event ->
                 {
                     val remove = linkedIdsToRemove(data, event)
