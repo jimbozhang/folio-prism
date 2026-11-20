@@ -872,10 +872,13 @@ Documents/folio-prism/
 - 端口从 8420 起尝试到 8430；页面显示 `http://<手机局域网 IP>:<端口>`，取不到局域网地址时回退 `127.0.0.1`。
 - 页面与功能：
   - 概览：总资产、红利/组合、7 类卡片与持仓明细（与 App 同口径，来自 `/api/overview`）；
-  - 图表：7 种图表 + 区间预设（`/api/chart`、`/api/flows`、`/api/expenses`）；
-  - 流水：按类型/机构/关键词筛选，新增/编辑/删除 6 类事件（`POST/PUT/DELETE /api/events`），刷新行情（`POST /api/quotes/refresh`）。
+  - 图表：8 种图表（含分红统计，口径同 App）+ 区间预设（`/api/chart`、`/api/flows`、`/api/expenses`、`/api/dividends`）；
+  - 流水：按类型/机构/标的/关键词筛选（机构与标的须由同一仓位满足，与 App 同规则），新增/编辑/删除 6 类事件（`POST/PUT/DELETE /api/events`），刷新行情（`POST /api/quotes/refresh`）；
+  - 数据文件：顶栏「下载数据」以附件形式原样下载 `folio-prism.json`（`GET /api/download`）；「上传数据」仅接受名为 `folio-prism.json` 的文件，服务端用数据文件严格反序列化器校验格式（未知字段即拒绝），通过后才经 `PortfolioRepository` 原子替换手机上的文件（`POST /api/upload`）。
+  - APK 升级（D-34）：顶栏「上传APK」以 `PUT /api/apk?name=<文件名>` 发送原始二进制（`Content-Type: application/octet-stream`）；服务端把请求体落为临时文件（二进制安全），`WebPortfolioApi.uploadApk` 校验文件名（拒绝空名、`.`/`..`、含 `/` `\` NUL；须以 `.apk` 结尾，忽略大小写）与内容（非空、前 4 字节为 ZIP 本地文件头 `PK\x03\x04`）后，覆盖写入数据文件同目录（`Documents/folio-prism/`），复用「所有文件访问」权限；响应发出后删除临时文件。
 - 静态资源打包在 `app/src/main/assets/web/`（含 Chart.js），不访问外网；没有鉴权、HTTPS、CORS 校验，只适合可信局域网。
 - 事件写入复用 `PortfolioRepository`（备份 + 原子写 + 更新 `meta.updatedAt`）；网页端的行情快照只在内存，历史复用 `price-cache.json`。
+- 未读取请求体即拒绝的请求（405/404）：服务端按 `Content-Length` 丢弃剩余请求体后再响应（drain）。否则残留字节会留在 keep-alive 连接上，与下一个请求拼接成非法请求行（表现为 `xGET` 之类的 400）。
 - 已知限制：仓储没有写锁，App 与 Web 同时写事件可能丢失更新；网页修改需重启 App 才能在手机上看到。
 
 ---

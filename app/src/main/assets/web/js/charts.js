@@ -7,6 +7,7 @@ const ChartsView = (() => {
     { key: 'assets', label: '总资产', kind: 'history' },
     { key: 'category_assets', label: '类别资产', kind: 'history', category: true },
     { key: 'category_pnl', label: '类别盈亏', kind: 'history' },
+    { key: 'dividends', label: '分红统计', kind: 'dividends' },
     { key: 'flows', label: '投入取出', kind: 'flows' },
     { key: 'expenses', label: '费用统计', kind: 'expenses' },
     { key: 'institutions', label: '机构分布', kind: 'snapshot' },
@@ -165,6 +166,8 @@ const ChartsView = (() => {
           data = await Api.flows(range.from, range.to);
         } else if (current.kind === 'expenses') {
           data = await Api.expenses(range.from, range.to);
+        } else if (current.kind === 'dividends') {
+          data = await Api.dividends(range.from, range.to);
         } else {
           data = await Api.chart(current.key, range.from, range.to, categoryId);
         }
@@ -230,6 +233,11 @@ const ChartsView = (() => {
         return;
       }
 
+      if (current.key === 'dividends') {
+        this.renderDividends(content, state, data);
+        return;
+      }
+
       if (current.key === 'flows') {
         this.mount(content, {
           type: 'bar',
@@ -284,6 +292,56 @@ const ChartsView = (() => {
           options: barOptions('费用', true, true),
         });
       }
+    },
+
+    renderDividends(content, state, data) {
+      const total = Fmt.num(data.totalCny) || 0;
+      if (data.incomplete) {
+        content.appendChild(el('div', 'banner warn', '部分分红因缺少汇率未计入'));
+      }
+      const hero = el('div', 'dv-hero');
+      hero.appendChild(el('div', 'label', '区间分红合计'));
+      hero.appendChild(el('div', 'value', data.count > 0 ? Fmt.cny(data.totalCny) : '--'));
+      content.appendChild(hero);
+      if (data.count === 0) {
+        content.appendChild(el('div', 'empty', '所选区间内没有分红事件。'));
+        return;
+      }
+      const row = el('div', 'summary-row');
+      row.appendChild(summaryItem('分红笔数', data.count + ' 笔'));
+      row.appendChild(summaryItem('月均分红',
+        data.averagePerMonthCny ? Fmt.cny(data.averagePerMonthCny) : '--'));
+      row.appendChild(summaryItem('单笔最大', data.largest
+        ? Fmt.cny(data.largest.amountCny) + ' · ' + monthDay(data.largest.date) : '--'));
+      row.appendChild(summaryItem('最近一笔', data.latest
+        ? monthDay(data.latest.date) + ' · ' + Fmt.cny(data.latest.amountCny) : '--'));
+      content.appendChild(row);
+
+      const palette = ['#e6a23c', '#e8613c', '#0984e3', '#6c5ce7', '#2e9e6b', '#b2bec3'];
+      const categoryColor = categoryColors(state.portfolio);
+      const blocks = el('div', 'dv-blocks');
+      const direction = [];
+      if (data.withdrawnCount > 0) {
+        direction.push({ name: '立即转出', amountCny: data.withdrawnCny, count: data.withdrawnCount });
+      }
+      if (data.retainedCount > 0) {
+        direction.push({ name: '留存现金', amountCny: data.retainedCny, count: data.retainedCount });
+      }
+      if (direction.length > 0) {
+        blocks.appendChild(dividendBlock('去向分布', direction, total, ['#0984e3', '#2e9e6b']));
+      }
+      blocks.appendChild(dividendBlock('来源分布（类别）', data.bySourceCategory, total,
+        data.bySourceCategory.map(function (item, index) {
+          return categoryColor[item.name] || palette[index % palette.length];
+        })));
+      blocks.appendChild(dividendBlock('来源明细（标的）', data.bySourceInstrument, total, palette));
+      blocks.appendChild(dividendBlock('入账账户', data.byDestinationAccount, total, palette));
+      const months = data.monthly.map(function (item) {
+        return { name: monthLabel(item.month), amountCny: item.amountCny, count: item.count };
+      });
+      blocks.appendChild(dividendBlock('月度分红', months, total,
+        months.map(function () { return '#e6a23c'; })));
+      content.appendChild(blocks);
     },
 
     renderDistribution(content, key, rows) {
@@ -430,6 +488,44 @@ function categoryColors(portfolio) {
   categories.forEach(function (category) { map[category.name] = category.color; });
   map['手续费/损耗'] = '#e8613c';
   return map;
+}
+
+function dividendBlock(title, rows, total, colors) {
+  const block = el('div', 'dv-block');
+  block.appendChild(el('h3', null, title));
+  rows.forEach(function (item, index) {
+    const amount = Fmt.num(item.amountCny) || 0;
+    const share = total > 0 ? amount / total : 0;
+    const pct = Math.round(share * 1e6) / 1e4;
+    const color = colors[index % colors.length];
+    const row = el('div', 'dv-row');
+    const top = el('div', 'dv-top');
+    const dot = el('i', 'dot');
+    dot.style.background = color;
+    top.appendChild(dot);
+    top.appendChild(el('span', 'name', item.name));
+    top.appendChild(el('span', 'amount', Fmt.cny(item.amountCny)));
+    top.appendChild(el('span', 'meta', pct.toFixed(1) + '% · ' + item.count + ' 笔'));
+    row.appendChild(top);
+    const bar = el('div', 'dv-bar');
+    const fill = el('div', 'dv-fill');
+    fill.style.width = Math.max(pct, 0) + '%';
+    fill.style.background = color;
+    bar.appendChild(fill);
+    row.appendChild(bar);
+    block.appendChild(row);
+  });
+  return block;
+}
+
+function monthLabel(month) {
+  const parts = String(month).split('-');
+  return parts[0] + ' 年 ' + Number(parts[1]) + ' 月';
+}
+
+function monthDay(date) {
+  const parts = String(date).split('-');
+  return Number(parts[1]) + '月' + Number(parts[2]) + '日';
 }
 
 function lineOptions(label) {

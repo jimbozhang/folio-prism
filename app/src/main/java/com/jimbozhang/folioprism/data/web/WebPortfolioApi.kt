@@ -1,7 +1,10 @@
 package com.jimbozhang.folioprism.data.web
 
+import com.jimbozhang.folioprism.data.json.PortfolioJson
 import com.jimbozhang.folioprism.data.price.LivePriceProvider
 import com.jimbozhang.folioprism.data.store.PortfolioRepository
+import com.jimbozhang.folioprism.domain.calc.DividendGroup
+import com.jimbozhang.folioprism.domain.calc.DividendStatsCalculator
 import com.jimbozhang.folioprism.domain.calc.EventReplay
 import com.jimbozhang.folioprism.domain.calc.SnapshotCalculator
 import com.jimbozhang.folioprism.domain.history.DateRange
@@ -35,6 +38,65 @@ class WebPortfolioApi(
 
     override suspend fun portfolio(): String? =
         if (dataFile.exists()) runCatching { dataFile.readText() }.getOrNull() else null
+
+    override suspend fun replaceData(rawJson: String): WriteResult {
+        // Strict decode with the app's data-file serializer: incompatible
+        // schemas or unknown keys are rejected before touching the file.
+        val data = runCatching { PortfolioJson.decode(rawJson) }
+            .getOrElse { return WriteResult.Invalid("文件格式不兼容") }
+        val updated = runCatching { repository.save(data) }
+            .getOrElse { return WriteResult.Failed(it.message ?: "保存失败") }
+        return WriteResult.Ok(updated.meta.updatedAt)
+    }
+
+    /**
+     * Saves an uploaded APK into the data directory next to [dataFile]. Same
+     * names overwrite in place so a phone can be updated straight from the web
+     * UI. The name is taken from the request, never from the source file.
+     */
+    override suspend fun uploadApk(fileName: String, source: File?): ApkUploadResult {
+        // Browsers send a bare filename; reject anything that still carries
+        // path separators so a crafted name cannot escape the data directory.
+        val clean = fileName.trim()
+        if (clean.isEmpty() || clean == "." || clean == ".." ||
+            clean.contains('/') || clean.contains('\\') || clean.contains('\u0000')
+        ) {
+            return ApkUploadResult.Invalid("文件名无效")
+        }
+        if (!clean.endsWith(".apk", ignoreCase = true)) {
+            return ApkUploadResult.Invalid("只允许上传 .apk 文件")
+        }
+        if (source == null || !source.exists() || source.length() == 0L) {
+            return ApkUploadResult.Invalid("未收到文件内容")
+        }
+        if (!isApk(source)) {
+            return ApkUploadResult.Invalid("文件不是有效的 APK")
+        }
+        val targetDir = dataFile.parentFile ?: return ApkUploadResult.Failed("无法确定保存目录")
+        if (!targetDir.exists() && !targetDir.mkdirs()) {
+            return ApkUploadResult.Failed("无法创建保存目录")
+        }
+        return runCatching {
+            val target = File(targetDir, clean)
+            source.copyTo(target, overwrite = true)
+            ApkUploadResult.Ok(clean, target.length())
+        }.getOrElse { ApkUploadResult.Failed(it.message ?: "保存失败") }
+    }
+
+    /** APKs are ZIP archives: the first bytes must be the local file header. */
+    private fun isApk(file: File): Boolean {
+        val magic = ByteArray(4)
+        file.inputStream().use { input ->
+            var read = 0
+            while (read < 4) {
+                val n = input.read(magic, read, 4 - read)
+                if (n < 0) break
+                read += n
+            }
+            if (read < 4) return false
+        }
+        return magic.contentEquals(byteArrayOf(0x50, 0x4B, 0x03, 0x04))
+    }
 
     override suspend fun overview(): OverviewDto {
         val data = currentData()
@@ -243,6 +305,31 @@ class WebPortfolioApi(
         )
     }
 
+    override suspend fun dividends(from: LocalDate, to: LocalDate): DividendsDto {
+        require(!from.isAfter(to)) { "开始日期不能晚于结束日期" }
+        val data = currentData()
+        val quoteSnapshot = quotes.ensure(data)
+        val stats = DividendStatsCalculator.calculate(data, quoteSnapshot.fxRates, from, to)
+        return DividendsDto(
+            totalCny = stats.totalCny.plain(),
+            count = stats.count,
+            incomplete = stats.incomplete,
+            averagePerMonthCny = stats.averagePerMonthCny.plainOrNull(),
+            withdrawnCny = stats.withdrawnCny.plain(),
+            withdrawnCount = stats.withdrawnCount,
+            retainedCny = stats.retainedCny.plain(),
+            retainedCount = stats.retainedCount,
+            monthly = stats.monthly.map {
+                DividendMonthDto(it.month.toString(), it.amountCny.plain(), it.count)
+            },
+            bySourceCategory = stats.bySourceCategory.map(::toDividendGroupDto),
+            bySourceInstrument = stats.bySourceInstrument.map(::toDividendGroupDto),
+            byDestinationAccount = stats.byDestinationAccount.map(::toDividendGroupDto),
+            largest = stats.largest?.let { DividendRecordDto(it.date.toString(), it.amountCny.plain()) },
+            latest = stats.latest?.let { DividendRecordDto(it.date.toString(), it.amountCny.plain()) },
+        )
+    }
+
     override suspend fun refreshQuotes(): QuoteStatusDto {
         val data = currentData()
         return quoteStatus(quotes.refresh(data))
@@ -285,6 +372,13 @@ class WebPortfolioApi(
         }.getOrElse { return WriteResult.Failed(it.message ?: "保存失败") }
         return WriteResult.Ok(updated.meta.updatedAt)
     }
+
+    private fun toDividendGroupDto(group: DividendGroup) = DividendGroupDto(
+        id = group.id,
+        name = group.name,
+        amountCny = group.amountCny.plain(),
+        count = group.count,
+    )
 
     private suspend fun currentData(): PortfolioData =
         repository.data.value ?: repository.load()

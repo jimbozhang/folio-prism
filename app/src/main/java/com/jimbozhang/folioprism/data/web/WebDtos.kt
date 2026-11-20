@@ -25,6 +25,12 @@ data class ErrorDto(val error: String)
 data class VersionDto(val version: String)
 
 @Serializable
+data class ApkUploadDto(
+    val fileName: String,
+    val sizeBytes: Long,
+)
+
+@Serializable
 data class CountsDto(
     val institutions: Int,
     val instruments: Int,
@@ -180,3 +186,42 @@ data class ExpenseMonthDto(
 
 @Serializable
 data class ExpensesDto(val months: List<ExpenseMonthDto>)
+
+@Serializable
+data class DividendGroupDto(
+    val id: String,
+    val name: String,
+    val amountCny: String,
+    val count: Int,
+)
+
+@Serializable
+data class DividendMonthDto(
+    val month: String,
+    val amountCny: String,
+    val count: Int,
+)
+
+@Serializable
+data class DividendRecordDto(
+    val date: String,
+    val amountCny: String,
+)
+
+@Serializable
+data class DividendsDto(
+    val totalCny: String,
+    val count: Int,
+    val incomplete: Boolean,
+    val averagePerMonthCny: String?,
+    val withdrawnCny: String,
+    val withdrawnCount: Int,
+    val retainedCny: String,
+    val retainedCount: Int,
+    val monthly: List<DividendMonthDto> = emptyList(),
+    val bySourceCategory: List<DividendGroupDto> = emptyList(),
+    val bySourceInstrument: List<DividendGroupDto> = emptyList(),
+    val byDestinationAccount: List<DividendGroupDto> = emptyList(),
+    val largest: DividendRecordDto? = null,
+    val latest: DividendRecordDto? = null,
+)

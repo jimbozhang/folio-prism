@@ -405,6 +405,42 @@ button { font: inherit; }
 }
 .hidden { display: none !important; }
 
+/* Dividend statistics view */
+.dv-hero { padding: 4px 0 0; }
+.dv-hero .label { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+.dv-hero .value {
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.3px;
+  font-variant-numeric: tabular-nums;
+}
+.dv-blocks { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 28px; margin-top: 18px; }
+.dv-block h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.dv-row { padding: 6px 0; }
+.dv-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dv-top .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dv-top .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.dv-top .amount {
+  margin-left: auto;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dv-top .meta {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dv-bar { height: 5px; border-radius: 3px; background: #f3f4f3; overflow: hidden; margin-top: 5px; }
+.dv-fill { height: 100%; border-radius: 3px; }
+
 .toast {
   position: fixed;
   bottom: 28px;
@@ -433,4 +469,5 @@ button { font: inherit; }
   .ledger-row { grid-template-columns: 54px 1fr 100px; align-items: start; }
   .ledger-title, .ledger-sub { white-space: normal; }
   .chart-wrap { height: 300px; }
+  .dv-blocks { grid-template-columns: 1fr; }
 }

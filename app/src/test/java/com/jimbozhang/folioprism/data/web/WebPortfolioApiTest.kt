@@ -1,5 +1,6 @@
 package com.jimbozhang.folioprism.data.web
 
+import com.jimbozhang.folioprism.data.json.PortfolioJson
 import com.jimbozhang.folioprism.data.store.PortfolioRepository
 import com.jimbozhang.folioprism.domain.CASH_CNY
 import com.jimbozhang.folioprism.domain.CASH_USD
@@ -22,7 +23,9 @@ import com.jimbozhang.folioprism.domain.model.ExternalClassification
 import com.jimbozhang.folioprism.domain.model.ExternalDirection
 import com.jimbozhang.folioprism.domain.model.ExternalEvent
 import com.jimbozhang.folioprism.domain.model.IncomeEvent
+import com.jimbozhang.folioprism.domain.model.IncomeKind
 import com.jimbozhang.folioprism.domain.model.Institution
+import com.jimbozhang.folioprism.domain.model.OpeningEvent
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.money.bd
 import com.jimbozhang.folioprism.domain.quote.Quote
@@ -34,6 +37,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -87,6 +91,62 @@ class WebPortfolioApiTest {
         val text = runBlocking { env.api.portfolio() }
         assertTrue(text!!.contains("\"schemaVersion\""))
         assertTrue(text.contains(FUND))
+    }
+
+    @Test
+    fun uploadApkSavesBytesAndOverwrites() {
+        val env = environment()
+        val targetDir = env.dataFile.parentFile!!
+        val source = File.createTempFile("apk", ".apk").apply {
+            parentFile?.deleteOnExit()
+            writeBytes(byteArrayOf(0x50, 0x4B, 0x03, 0x04, 1, 2, 3, 4))
+        }
+        try {
+            val first = runBlocking { env.api.uploadApk("folio-prism-0.3.0.apk", source) }
+            assertTrue(first is ApkUploadResult.Ok)
+            val target = File(targetDir, "folio-prism-0.3.0.apk")
+            assertTrue(target.exists())
+            assertArrayEquals(source.readBytes(), target.readBytes())
+
+            // Same name with different bytes overwrites in place.
+            source.writeBytes(byteArrayOf(0x50, 0x4B, 0x03, 0x04, 9, 9))
+            val second = runBlocking { env.api.uploadApk("folio-prism-0.3.0.apk", source) }
+            assertTrue(second is ApkUploadResult.Ok)
+            assertArrayEquals(byteArrayOf(0x50, 0x4B, 0x03, 0x04, 9, 9), target.readBytes())
+            assertEquals(1, targetDir.listFiles { f -> f.name.endsWith(".apk") }!!.size)
+        } finally {
+            source.delete()
+        }
+    }
+
+    @Test
+    fun uploadApkRejectsInvalidNamesAndNonApkBytes() {
+        val env = environment()
+        fun expectInvalid(name: String, bytes: ByteArray?, sourceExists: Boolean = true) {
+            val source = File.createTempFile("apk", ".tmp").apply {
+                parentFile?.deleteOnExit()
+                if (bytes != null && sourceExists) writeBytes(bytes)
+            }
+            try {
+                val result = runBlocking { env.api.uploadApk(name, source) }
+                assertTrue("expected Invalid for $name", result is ApkUploadResult.Invalid)
+            } finally {
+                source.delete()
+            }
+        }
+
+        // Bad names are rejected before touching the file.
+        expectInvalid("setup.exe", byteArrayOf(0x50, 0x4B, 0x03, 0x04, 1))
+        expectInvalid("../evil.apk", byteArrayOf(0x50, 0x4B, 0x03, 0x04, 1))
+        expectInvalid("", byteArrayOf(0x50, 0x4B, 0x03, 0x04, 1))
+
+        // A valid name with non-APK bytes ("Hello") is rejected.
+        expectInvalid("new.apk", byteArrayOf(0x48, 0x65, 0x6C, 0x6C, 0x6F))
+
+        // Missing / empty source is rejected.
+        val missing = File.createTempFile("apk", ".tmp")
+        missing.delete()
+        assertTrue(runBlocking { env.api.uploadApk("new.apk", missing) } is ApkUploadResult.Invalid)
     }
 
     @Test
@@ -183,6 +243,101 @@ class WebPortfolioApiTest {
     }
 
     @Test
+    fun dividendsAggregateDividendIncomeOnly() {
+        val cnyDividend = IncomeEvent(
+            kind = IncomeKind.DIVIDEND,
+            source = ref(INST_A, FUND),
+            destination = ref(INST_A, CASH_CNY),
+            amount = bd("36"),
+            currency = "CNY",
+            date = "2026-03-15T00:00:00+08:00",
+        )
+        val usdDividend = IncomeEvent(
+            kind = IncomeKind.DIVIDEND,
+            destination = ref(INST_B, CASH_USD),
+            amount = bd("10"),
+            currency = "USD",
+            date = "2026-05-10T00:00:00+08:00",
+            immediateExternalWithdrawal = true,
+        )
+        val interest = IncomeEvent(
+            kind = IncomeKind.INTEREST,
+            destination = ref(INST_A, CASH_CNY),
+            amount = bd("5"),
+            currency = "CNY",
+            date = "2026-05-11T00:00:00+08:00",
+        )
+        val outOfRange = IncomeEvent(
+            kind = IncomeKind.DIVIDEND,
+            destination = ref(INST_A, CASH_CNY),
+            amount = bd("1"),
+            currency = "CNY",
+            date = "2025-12-01T00:00:00+08:00",
+        )
+        val env = environment(baseData(cnyDividend, usdDividend, interest, outOfRange))
+
+        val stats = runBlocking {
+            env.api.dividends(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 11, 19))
+        }
+
+        assertDecimal("108", stats.totalCny.toBigDecimal())
+        assertEquals(2, stats.count)
+        assertFalse(stats.incomplete)
+        assertDecimal("54", stats.averagePerMonthCny!!.toBigDecimal())
+        assertEquals(1, stats.withdrawnCount)
+        assertDecimal("72", stats.withdrawnCny.toBigDecimal())
+        assertEquals(1, stats.retainedCount)
+        assertDecimal("36", stats.retainedCny.toBigDecimal())
+
+        assertEquals(2, stats.monthly.size)
+        assertEquals("2026-05", stats.monthly[0].month)
+        assertDecimal("72", stats.monthly[0].amountCny.toBigDecimal())
+        assertEquals("2026-03", stats.monthly[1].month)
+        assertDecimal("36", stats.monthly[1].amountCny.toBigDecimal())
+
+        assertEquals("无来源", stats.bySourceCategory[0].name)
+        assertDecimal("72", stats.bySourceCategory[0].amountCny.toBigDecimal())
+        assertEquals("成长", stats.bySourceCategory[1].name)
+        assertEquals("无来源", stats.bySourceInstrument[0].name)
+        assertEquals("ins_fund", stats.bySourceInstrument[1].name)
+
+        assertEquals(2, stats.byDestinationAccount.size)
+        assertEquals("机构B · USD cash", stats.byDestinationAccount[0].name)
+
+        assertEquals("2026-05-10", stats.largest!!.date)
+        assertDecimal("72", stats.largest.amountCny.toBigDecimal())
+        assertEquals("2026-05-10", stats.latest!!.date)
+
+        val badRange = runCatching {
+            runBlocking { env.api.dividends(LocalDate.of(2026, 11, 19), LocalDate.of(2026, 1, 1)) }
+        }
+        assertTrue(badRange.isFailure)
+    }
+
+    @Test
+    fun replaceDataRejectsIncompatibleAndStoresValid() {
+        val env = environment()
+
+        val notJson = runBlocking { env.api.replaceData("not json") }
+        assertTrue(notJson is WriteResult.Invalid)
+        val unknownKeys = runBlocking { env.api.replaceData("""{"bogus":1}""") }
+        assertTrue(unknownKeys is WriteResult.Invalid)
+
+        val incoming = portfolio(
+            institutions = listOf(Institution(INST_B, "机构B")),
+            instruments = listOf(cash),
+            events = listOf(opening(ref(INST_B, CASH_CNY), amount = "77")),
+        )
+        val result = runBlocking { env.api.replaceData(PortfolioJson.encode(incoming)) }
+        assertTrue(result is WriteResult.Ok)
+        val stored = env.repository.data.value!!
+        assertEquals(1, stored.institutions.size)
+        assertEquals(INST_B, stored.institutions.single().id)
+        val event = stored.events.single() as OpeningEvent
+        assertDecimal("77", event.amount!!)
+    }
+
+    @Test
     fun chartsReturnSeriesAndSummaries() {
         val env = environment()
 
@@ -259,7 +414,7 @@ class WebPortfolioApiTest {
             history = history,
             today = { today },
         )
-        return Env(repository, api)
+        return Env(repository, api, dataFile)
     }
 
     private fun historyResult(): HistoryResult = HistoryResult(
@@ -289,6 +444,7 @@ class WebPortfolioApiTest {
     private class Env(
         val repository: PortfolioRepository,
         val api: WebPortfolioApi,
+        val dataFile: File,
     )
 
     private class FixedQuotes(private val snapshot: QuoteSnapshot) : QuoteSource {

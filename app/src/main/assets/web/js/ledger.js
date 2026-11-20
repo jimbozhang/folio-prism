@@ -151,9 +151,17 @@ const LedgerView = (() => {
 
   function matches(event, filter, data) {
     if (filter.type !== 'all' && event.type !== filter.type) return false;
-    if (filter.institutionId !== 'all' &&
-      !refsOf(event).some(function (ref) { return ref.institutionId === filter.institutionId; })) {
-      return false;
+    // Same rule as the app: institution and instrument must be satisfied by
+    // the SAME position reference, so a transfer touching two positions is
+    // not matched by a combination no single leg fulfils.
+    const institutionId = filter.institutionId === 'all' ? null : filter.institutionId;
+    const instrumentId = filter.instrumentId === 'all' ? null : filter.instrumentId;
+    if (institutionId !== null || instrumentId !== null) {
+      const hit = refsOf(event).some(function (ref) {
+        return (institutionId === null || ref.institutionId === institutionId) &&
+          (instrumentId === null || ref.instrumentId === instrumentId);
+      });
+      if (!hit) return false;
     }
     if (filter.keyword) {
       const description = describe(event, data);
@@ -194,6 +202,16 @@ const LedgerView = (() => {
         renderList(listCard, state);
       });
 
+    const instrumentOptions = [{ value: 'all', label: '全部标的' }].concat(
+      (state.portfolio.instruments || []).map(function (item) {
+        return { value: item.id, label: item.code + ' ' + item.name };
+      }));
+    const instrumentSelect = selectEl(instrumentOptions, state.ledger.instrumentId,
+      function (value) {
+        state.ledger.instrumentId = value;
+        renderList(listCard, state);
+      });
+
     const keyword = el('input', 'input wide');
     keyword.type = 'search';
     keyword.placeholder = '搜索备注、标的、机构…';
@@ -208,6 +226,7 @@ const LedgerView = (() => {
 
     toolbar.appendChild(typeSelect);
     toolbar.appendChild(institutionSelect);
+    toolbar.appendChild(instrumentSelect);
     toolbar.appendChild(keyword);
     const grow = el('span', 'grow');
     toolbar.appendChild(grow);

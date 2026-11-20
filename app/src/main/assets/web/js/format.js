@@ -50,6 +50,19 @@ const Fmt = (() => {
     return prefix + fmt2.format(n);
   }
 
+  function bytes(value) {
+    const n = num(value);
+    if (n === null) return '--';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    let v = n;
+    while (v >= 1024 && i < units.length - 1) {
+      v /= 1024;
+      i += 1;
+    }
+    return v.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+  }
+
   function signedNative(value, currency) {
     const n = num(value);
     if (n === null) return '--';
@@ -102,7 +115,7 @@ const Fmt = (() => {
 
   return {
     num, cny, plain, percent, pctPoints, quantity,
-    native, signedNative, datePart, timePart, timestamp,
+    native, signedNative, bytes, datePart, timePart, timestamp,
     nowLocal, datetimeLocal, dateLabel,
   };
 })();

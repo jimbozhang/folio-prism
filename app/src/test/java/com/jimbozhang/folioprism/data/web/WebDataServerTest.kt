@@ -131,10 +131,65 @@ class WebDataServerTest {
     }
 
     @Test
+    fun dividendsAreServed() {
+        val response = request("GET", "/api/dividends?from=2026-01-01&to=2026-02-01")
+        assertEquals(200, response.first)
+        assertTrue(response.second.contains("\"totalCny\":\"0\""))
+        assertEquals(LocalDate.of(2026, 1, 1), api.lastDividendsFrom)
+        assertEquals(LocalDate.of(2026, 2, 1), api.lastDividendsTo)
+        assertEquals(400, request("GET", "/api/dividends?from=2026-02-01&to=2026-01-01").first)
+        assertEquals(405, request("POST", "/api/dividends?from=2026-01-01&to=2026-02-01").first)
+    }
+
+    @Test
+    fun downloadAndUploadAreServed() {
+        val download = request("GET", "/api/download")
+        assertEquals(200, download.first)
+        assertTrue(download.third.orEmpty().contains("application/json"))
+        assertTrue(download.second.contains("\"events\":[]"))
+
+        val connection = URL(base + "/api/download").openConnection() as HttpURLConnection
+        assertEquals("attachment; filename=\"folio-prism.json\"",
+            connection.getHeaderField("Content-Disposition"))
+
+        val uploaded = request("POST", "/api/upload", """{"events":[]}""")
+        assertEquals(200, uploaded.first)
+        assertTrue(uploaded.second.contains("\"version\""))
+        assertEquals("""{"events":[]}""", api.lastUploadBody)
+        assertEquals(405, request("GET", "/api/upload").first)
+        assertEquals(405, request("POST", "/api/download").first)
+    }
+
+    @Test
     fun unknownApiPathsAreNotFound() {
         assertEquals(404, request("GET", "/api/nope").first)
         assertEquals(405, request("GET", "/api/events").first)
         assertEquals(405, request("GET", "/api/quotes/refresh").first)
+    }
+
+    @Test
+    fun apkUploadRouting() {
+        // Body is "PK" + two control bytes + "body" = 8 bytes.
+        val uploaded = request("PUT", "/api/apk?name=folio-prism.apk", "PK\u0003\u0004body")
+        assertEquals(200, uploaded.first)
+        assertTrue(uploaded.second.contains("\"fileName\":\"folio-prism.apk\""))
+        assertTrue(uploaded.second.contains("\"sizeBytes\":8"))
+        assertEquals("folio-prism.apk", api.lastApkName)
+        assertEquals(8L, api.lastApkSourceLength)
+        assertEquals(405, request("POST", "/api/apk?name=x.apk", "x").first)
+        // The POST above left a body on the keep-alive connection; the next
+        // request on the same socket must still parse cleanly.
+        assertEquals(405, request("GET", "/api/apk?name=x.apk").first)
+
+        api.apkResult = ApkUploadResult.Invalid("文件名无效")
+        val invalid = request("PUT", "/api/apk?name=bad", "body")
+        assertEquals(400, invalid.first)
+        assertTrue(invalid.second.contains("文件名无效"))
+
+        api.apkResult = ApkUploadResult.Failed("磁盘错误")
+        val failed = request("PUT", "/api/apk?name=x.apk", "body")
+        assertEquals(500, failed.first)
+        assertTrue(failed.second.contains("磁盘错误"))
     }
 
     private fun request(method: String, path: String, body: String? = null): Triple<Int, String, String?> {
@@ -160,9 +215,20 @@ class WebDataServerTest {
         var lastChartFrom: LocalDate? = null
         var lastChartTo: LocalDate? = null
         var lastChartCategoryId: String? = null
+        var lastDividendsFrom: LocalDate? = null
+        var lastDividendsTo: LocalDate? = null
+        var lastUploadBody: String? = null
+        var lastApkName: String? = null
+        var lastApkSourceLength: Long? = null
         var writeResult: WriteResult = WriteResult.Ok("v1")
+        var apkResult: ApkUploadResult? = null
 
         override suspend fun portfolio(): String = """{"events":[]}"""
+
+        override suspend fun replaceData(rawJson: String): WriteResult {
+            lastUploadBody = rawJson
+            return WriteResult.Ok("v-uploaded")
+        }
 
         override suspend fun overview(): OverviewDto = OverviewDto(
             version = "v1",
@@ -205,6 +271,22 @@ class WebDataServerTest {
             return ExpensesDto(emptyList())
         }
 
+        override suspend fun dividends(from: LocalDate, to: LocalDate): DividendsDto {
+            require(!from.isAfter(to)) { "开始日期不能晚于结束日期" }
+            lastDividendsFrom = from
+            lastDividendsTo = to
+            return DividendsDto(
+                totalCny = "0",
+                count = 0,
+                incomplete = false,
+                averagePerMonthCny = null,
+                withdrawnCny = "0",
+                withdrawnCount = 0,
+                retainedCny = "0",
+                retainedCount = 0,
+            )
+        }
+
         override suspend fun refreshQuotes(): QuoteStatusDto = QuoteStatusDto()
 
         override suspend fun createEvent(body: String): WriteResult {
@@ -221,6 +303,12 @@ class WebDataServerTest {
         override suspend fun deleteEvent(id: String): WriteResult {
             lastDeleteId = id
             return writeResult
+        }
+
+        override suspend fun uploadApk(fileName: String, source: File?): ApkUploadResult {
+            lastApkName = fileName
+            lastApkSourceLength = source?.length()
+            return apkResult ?: ApkUploadResult.Ok(fileName, source?.length() ?: 0L)
         }
     }
 }

@@ -52,8 +52,38 @@ const Api = {
     return this.get('/api/expenses?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to));
   },
 
+  dividends(from, to) {
+    return this.get('/api/dividends?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to));
+  },
+
   refreshQuotes() {
     return this.send('POST', '/api/quotes/refresh');
+  },
+
+  uploadData(rawJson) {
+    return this.sendRaw('POST', '/api/upload', rawJson);
+  },
+
+  /** Raw binary upload; the filename travels as the `name` query param. */
+  async uploadApk(file) {
+    const path = '/api/apk?name=' + encodeURIComponent(file.name);
+    const r = await fetch(path, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    });
+    if (!r.ok) throw await this.toError(r);
+    return r.json();
+  },
+
+  async sendRaw(method, path, body) {
+    const r = await fetch(path, {
+      method,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body,
+    });
+    if (!r.ok) throw await this.toError(r);
+    return r.json();
   },
 
   createEvent(draft) {
