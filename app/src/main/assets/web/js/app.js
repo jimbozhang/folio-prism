@@ -3,7 +3,13 @@ const State = {
   portfolio: null,
   overview: null,
   view: 'overview',
-  ledger: { type: 'all', institutionId: 'all', instrumentId: 'all', keyword: '' },
+  ledger: {
+    type: 'all',
+    institutionId: 'all',
+    instrumentId: 'all',
+    keyword: '',
+    trackedPosition: '',
+  },
   charts: { type: 'assets', ranges: {} },
 };
 

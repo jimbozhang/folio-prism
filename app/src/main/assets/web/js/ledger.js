@@ -212,6 +212,34 @@ const LedgerView = (() => {
         renderList(listCard, state);
       });
 
+    // Tracked cash position: one specific account + instrument pair; any
+    // account is selectable, the instrument name must end with 现金.
+    const trackIndex = {};
+    (state.portfolio.events || []).forEach(function (event) {
+      refsOf(event).forEach(function (ref) {
+        const instrument = instrumentOf(state.portfolio, ref.instrumentId);
+        if (!instrument || instrument.kind !== 'cash' || !/现金$/.test(instrument.name)) return;
+        const key = ref.institutionId + '|' + ref.instrumentId;
+        if (trackIndex[key]) return;
+        trackIndex[key] = institutionName(state.portfolio, ref.institutionId) +
+          ' · ' + instrument.name;
+      });
+    });
+    const trackOptions = [{ value: '', label: '不跟踪' }].concat(
+      Object.keys(trackIndex)
+        .sort(function (a, b) { return trackIndex[a].localeCompare(trackIndex[b], 'zh-CN'); })
+        .map(function (key) { return { value: key, label: trackIndex[key] }; }));
+    const knownTrack = trackOptions.some(function (option) {
+      return option.value === state.ledger.trackedPosition;
+    });
+    if (!knownTrack) state.ledger.trackedPosition = '';
+    const trackLabel = el('span', 'muted', '跟踪资产');
+    const trackSelect = selectEl(trackOptions, state.ledger.trackedPosition,
+      function (value) {
+        state.ledger.trackedPosition = value;
+        renderList(listCard, state);
+      });
+
     const keyword = el('input', 'input wide');
     keyword.type = 'search';
     keyword.placeholder = '搜索备注、标的、机构…';
@@ -227,6 +255,8 @@ const LedgerView = (() => {
     toolbar.appendChild(typeSelect);
     toolbar.appendChild(institutionSelect);
     toolbar.appendChild(instrumentSelect);
+    toolbar.appendChild(trackLabel);
+    toolbar.appendChild(trackSelect);
     toolbar.appendChild(keyword);
     const grow = el('span', 'grow');
     toolbar.appendChild(grow);
@@ -263,6 +293,8 @@ const LedgerView = (() => {
       if (!groups.has(day)) groups.set(day, []);
       groups.get(day).push(event);
     });
+    const trackedPosition = state.ledger.trackedPosition;
+    const balances = trackedBalances(data.events || [], trackedPosition);
     groups.forEach(function (list, day) {
       const group = el('div', 'ledger-day');
       const header = el('div', 'day-header');
@@ -270,23 +302,104 @@ const LedgerView = (() => {
       header.appendChild(el('span', 'day-total', list.length + ' 笔'));
       group.appendChild(header);
       list.forEach(function (event) {
-        group.appendChild(rowEl(event, data, state));
+        group.appendChild(rowEl(event, data, state, balances, trackedPosition));
       });
       container.appendChild(group);
     });
   }
 
-  function rowEl(event, data, state) {
+  function rowEl(event, data, state, balances, trackedPosition) {
     const description = describe(event, data);
     const row = el('div', 'ledger-row');
     row.appendChild(el('span', 'chip ' + event.type, TYPE_LABEL[event.type] || event.type));
     const main = el('div', 'ledger-main');
     main.appendChild(el('div', 'ledger-title', description.title));
     if (description.sub) main.appendChild(el('div', 'ledger-sub', description.sub));
+    const balance = trackedPosition ? balances[event.id] : null;
+    if (balance) {
+      const instrument = instrumentOf(data, trackedPosition.split('|')[1]);
+      const currency = instrument ? instrument.currency : 'CNY';
+      main.appendChild(el('div', 'ledger-tracked',
+        '跟踪余额 ' + Fmt.native(balance.before, currency) + ' → ' +
+          Fmt.native(balance.after, currency)));
+    }
     row.appendChild(main);
     row.appendChild(el('div', 'ledger-amount ' + (description.amountClass || ''), description.amount));
     row.addEventListener('click', function () { openEditor(event, state); });
     return row;
+  }
+
+  /**
+   * Running balance of the tracked cash position (one account + instrument):
+   * event id -> { before, after } (exact decimal strings). Events that do not
+   * change it are omitted.
+   */
+  function trackedBalances(events, trackedPosition) {
+    const result = {};
+    if (!trackedPosition) return result;
+    const ordered = events.slice().sort(function (a, b) {
+      const ta = Fmt.timestamp(a.date);
+      const tb = Fmt.timestamp(b.date);
+      if (ta !== tb) return ta - tb;
+      return Fmt.timestamp(a.createdAt) - Fmt.timestamp(b.createdAt);
+    });
+    let running = '0';
+    ordered.forEach(function (event) {
+      const delta = trackedDelta(event, trackedPosition);
+      if (delta === null || Fmt.num(delta) === 0) return;
+      const before = running;
+      running = Fmt.add(running, delta);
+      result[event.id] = { before: before, after: running };
+    });
+    return result;
+  }
+
+  /** Signed change of the tracked position caused by one event. */
+  function trackedDelta(event, trackedPosition) {
+    function negate(value) {
+      return Fmt.mul(String(value), '-1');
+    }
+    function isTracked(ref) {
+      return !!ref && (ref.institutionId + '|' + ref.instrumentId) === trackedPosition;
+    }
+    const parts = [];
+    if (event.type === 'opening') {
+      if (isTracked(event.position)) {
+        const value = event.quantity === undefined || event.quantity === null
+          ? event.amount : event.quantity;
+        if (value !== undefined && value !== null) parts.push(String(value));
+      }
+    } else if (event.type === 'transfer') {
+      if (isTracked(event.from) && event.fromQuantity !== undefined && event.fromQuantity !== null) {
+        parts.push(negate(event.fromQuantity));
+      }
+      if (isTracked(event.to) && event.toQuantity !== undefined && event.toQuantity !== null) {
+        parts.push(String(event.toQuantity));
+      }
+      if (isTracked(event.feePosition) && event.feeAmount !== undefined && event.feeAmount !== null) {
+        parts.push(negate(event.feeAmount));
+      }
+    } else if (event.type === 'income') {
+      if (isTracked(event.destination) && event.amount !== undefined && event.amount !== null) {
+        parts.push(String(event.amount));
+      }
+    } else if (event.type === 'expense') {
+      if (isTracked(event.position) && event.amount !== undefined && event.amount !== null) {
+        parts.push(negate(event.amount));
+      }
+    } else if (event.type === 'external') {
+      if (isTracked(event.position) && event.amount !== undefined && event.amount !== null) {
+        parts.push(event.direction === 'in' ? String(event.amount) : negate(event.amount));
+      }
+    } else if (event.type === 'adjustment') {
+      if (isTracked(event.position)) {
+        const value = event.deltaQuantity === undefined || event.deltaQuantity === null
+          ? event.deltaAmount : event.deltaQuantity;
+        if (value !== undefined && value !== null) parts.push(String(value));
+      }
+    }
+    if (parts.length === 0) return null;
+    return Fmt.sum(parts);
   }
 
   function selectEl(options, value, onChange) {

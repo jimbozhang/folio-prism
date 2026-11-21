@@ -416,6 +416,14 @@ button { font: inherit; }
 .ledger-main { min-width: 0; }
 .ledger-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ledger-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ledger-tracked {
+  font-size: 12px;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .ledger-amount { text-align: right; font-variant-numeric: tabular-nums; font-weight: 550; }
 .ledger-amount.pos { color: var(--green); }
 .ledger-amount.neg { color: var(--coral); }
