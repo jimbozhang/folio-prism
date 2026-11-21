@@ -12,7 +12,7 @@ import com.jimbozhang.folioprism.domain.model.positionRefs
 
 internal val eventTypeFilterOptions = listOf(
     "transfer" to "转账",
-    "income" to "收益",
+    "income" to "利息/分红",
     "external" to "外部",
     "expense" to "支出",
     "opening" to "期初",

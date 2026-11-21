@@ -18,10 +18,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.Check
@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Savings
 import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.outlined.StackedLineChart
+import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material.icons.automirrored.outlined.TrendingUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -74,6 +75,11 @@ import com.jimbozhang.folioprism.domain.calc.DividendStatsCalculator
 import com.jimbozhang.folioprism.domain.calc.EventReplay
 import com.jimbozhang.folioprism.domain.calc.PortfolioSnapshot
 import com.jimbozhang.folioprism.domain.calc.PositionKey
+import com.jimbozhang.folioprism.domain.calc.RebalanceCategoryFlow
+import com.jimbozhang.folioprism.domain.calc.RebalanceMonth
+import com.jimbozhang.folioprism.domain.calc.RebalancePair
+import com.jimbozhang.folioprism.domain.calc.RebalanceStats
+import com.jimbozhang.folioprism.domain.calc.RebalanceStatsCalculator
 import com.jimbozhang.folioprism.domain.calc.SnapshotCalculator
 import com.jimbozhang.folioprism.domain.calc.localDate
 import com.jimbozhang.folioprism.domain.calc.parseEventTime
@@ -83,8 +89,6 @@ import com.jimbozhang.folioprism.domain.history.DateRange
 import com.jimbozhang.folioprism.domain.history.DailyPortfolioValue
 import com.jimbozhang.folioprism.domain.model.Category
 import com.jimbozhang.folioprism.domain.model.CategoryIds
-import com.jimbozhang.folioprism.domain.model.ExpenseEvent
-import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.ExternalDirection
 import com.jimbozhang.folioprism.domain.model.ExternalEvent
 import com.jimbozhang.folioprism.domain.model.PortfolioData
@@ -121,7 +125,7 @@ private enum class ChartType(
     CATEGORY_ASSETS("类别资产", Icons.Outlined.StackedLineChart, needsHistory = true, usesRange = true),
     CATEGORY_PNL("类别盈亏", Icons.Outlined.PieChart, needsHistory = true, usesRange = true),
     FLOWS("投入取出", Icons.Outlined.Savings, needsHistory = false, usesRange = true),
-    EXPENSES("费用统计", Icons.AutoMirrored.Outlined.ReceiptLong, needsHistory = false, usesRange = true),
+    REBALANCE("调仓统计", Icons.Outlined.SwapVert, needsHistory = false, usesRange = true),
     DIVIDENDS("分红统计", Icons.Outlined.Payments, needsHistory = false, usesRange = true),
     INSTITUTIONS("机构分布", Icons.Outlined.AccountBalance, needsHistory = false, usesRange = false),
     CURRENCIES("币种分布", Icons.Outlined.CurrencyExchange, needsHistory = false, usesRange = false),
@@ -142,12 +146,6 @@ private data class MonthFlow(
     val month: YearMonth,
     val inflow: BigDecimal,
     val outflow: BigDecimal,
-)
-
-private data class MonthExpense(
-    val month: YearMonth,
-    val total: BigDecimal,
-    val byCategory: Map<String, BigDecimal>,
 )
 
 private data class DistributionRowData(
@@ -172,9 +170,6 @@ fun ChartsScreen(
     val positions = remember(data) { EventReplay.replay(data.events) }
     val snapshot = remember(data, positions, quotes) {
         SnapshotCalculator.build(data, positions, LivePriceProvider(quotes), LocalDate.now())
-    }
-    val categoryNames = remember(data.settings.categories) {
-        data.settings.categories.associate { it.id to it.name }
     }
     val categoriesById = remember(data.settings.categories) {
         data.settings.categories.associateBy { it.id }
@@ -201,11 +196,11 @@ fun ChartsScreen(
     val monthlyFlows = remember(data.events, range, quotes.fxRates) {
         monthlyFlows(data, quotes.fxRates, range)
     }
-    val monthlyExpenses = remember(data.events, categoryNames, range, quotes.fxRates) {
-        monthlyExpenses(data, categoryNames, quotes.fxRates, range)
-    }
     val dividendStats = remember(data, quotes.fxRates, range) {
         DividendStatsCalculator.calculate(data, quotes.fxRates, range.from, range.to)
+    }
+    val rebalanceStats = remember(data, quotes.fxRates, range) {
+        RebalanceStatsCalculator.calculate(data, quotes.fxRates, range.from, range.to)
     }
     val dividendCategoryColors = remember(data.settings.categories) {
         data.settings.categories.associate { it.id to categoryColor(it) }
@@ -277,7 +272,11 @@ fun ChartsScreen(
             )
         }
 
+        // A fresh scroll position per chart (and per selected category) so a
+        // new page never opens halfway down with its first card clipped.
+        val listState = remember(chart, categoryId) { LazyListState() }
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
@@ -311,7 +310,8 @@ fun ChartsScreen(
                 )
 
                 ChartType.FLOWS -> flowsContent(monthlyFlows)
-                ChartType.EXPENSES -> expensesContent(monthlyExpenses)
+
+                ChartType.REBALANCE -> rebalanceContent(rebalanceStats)
 
                 ChartType.DIVIDENDS -> dividendsContent(
                     stats = dividendStats,
@@ -764,32 +764,6 @@ private fun LazyListScope.flowsContent(monthly: List<MonthFlow>) {
     }
 }
 
-private fun LazyListScope.expensesContent(monthly: List<MonthExpense>) {
-    val total = monthly.fold(BigDecimal.ZERO) { acc, expense -> acc.add(expense.total) }
-
-    item {
-        BigValueHeader(
-            label = "区间支出合计",
-            value = formatCny(total),
-            color = FolioInk,
-        )
-    }
-    item {
-        if (monthly.isEmpty()) {
-            EmptyBlock("所选区间内没有支出事件。")
-        } else {
-            WhiteBlock {
-                monthly.asReversed().forEachIndexed { index, expense ->
-                    if (index > 0) {
-                        HorizontalDivider(color = FolioDivider)
-                    }
-                    ExpenseRowItem(expense)
-                }
-            }
-        }
-    }
-}
-
 private data class DividendBarRow(
     val name: String,
     val amountCny: BigDecimal,
@@ -851,7 +825,7 @@ private fun LazyListScope.dividendsContent(
     }
     item {
         DividendBarsBlock(
-            title = "来源分布（类别）",
+            title = "来源类别",
             rows = stats.bySourceCategory.map {
                 DividendBarRow(
                     name = it.name,
@@ -865,7 +839,7 @@ private fun LazyListScope.dividendsContent(
     }
     item {
         DividendBarsBlock(
-            title = "来源明细（标的）",
+            title = "来源标的",
             rows = stats.bySourceInstrument.map {
                 DividendBarRow(
                     name = it.name,
@@ -987,18 +961,359 @@ private fun DividendBarRowItem(row: DividendBarRow, total: BigDecimal) {
 
 private fun shortDate(date: LocalDate): String = "${date.monthValue}月${date.dayOfMonth}日"
 
+private fun LazyListScope.rebalanceContent(stats: RebalanceStats) {
+    if (stats.count == 0) {
+        item { EmptyBlock("所选区间内没有调仓（不同标的之间的转账）。") }
+        item { RebalanceFootnote(stats) }
+        return
+    }
+    item {
+        WhiteBlock {
+            SummaryLine("调仓笔数", "${stats.count} 笔")
+            HorizontalDivider(color = FolioDivider)
+            SummaryLine("涉及天数", "${stats.dayCount} 天")
+            HorizontalDivider(color = FolioDivider)
+            SummaryLine(
+                "平均间隔",
+                stats.averageIntervalDays?.let { "约 $it 天一次" } ?: "--",
+            )
+            HorizontalDivider(color = FolioDivider)
+            SummaryLine("近 30 天", "${stats.recent30DaysCount} 次")
+            HorizontalDivider(color = FolioDivider)
+            SummaryLine("调仓金额", formatCny(stats.amountCny))
+            HorizontalDivider(color = FolioDivider)
+            SummaryLine("手续费/损耗", formatCny(stats.feeLossCny))
+            if (stats.incomplete) {
+                Text(
+                    text = "部分调仓缺少价格或汇率，金额可能不完整",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioCoral,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            }
+        }
+    }
+    item { RebalanceMonthlyChart(stats.months) }
+    if (stats.categoryFlows.isNotEmpty()) {
+        item { RebalanceFlowBlock(stats.categoryFlows) }
+    }
+    if (stats.topPairs.isNotEmpty()) {
+        item { RebalancePairsBlock(stats.topPairs) }
+    }
+    item { RebalanceFootnote(stats) }
+}
+
+@Composable
+private fun RebalanceFootnote(stats: RebalanceStats) {
+    val excluded = buildList {
+        if (stats.accountMoveCount > 0) add("同一标的换机构 ${stats.accountMoveCount} 笔")
+        if (stats.fxSwapCount > 0) add("现金换汇 ${stats.fxSwapCount} 笔")
+        if (stats.cashCategoryCount > 0) add("现金类别内互转 ${stats.cashCategoryCount} 笔")
+    }
+    val text = buildString {
+        append("口径：只统计不同标的之间的转账，同一天多笔计 1 个调仓日")
+        if (excluded.isNotEmpty()) {
+            append("；${excluded.joinToString("、")}未计入")
+        }
+        append("。")
+    }
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = FolioMuted,
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+    )
+}
+
+@Composable
+private fun RebalanceMonthlyChart(months: List<RebalanceMonth>) {
+    val ordered = months.asReversed()
+    val maxCount = ordered.maxOfOrNull { it.count } ?: 0
+    val hasAssetSwap = ordered.any { it.assetToAsset > 0 }
+    val swapColor = Color(0xFFB2BEC3)
+    WhiteBlock {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            SectionTitle("月度调仓")
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(150.dp),
+            ) {
+                val bottomPad = 1.dp.toPx()
+                val chartHeight = size.height - bottomPad
+                val step = if (ordered.isEmpty()) size.width else size.width / ordered.size
+                val barWidth = (step * 0.55f).coerceAtLeast(2.dp.toPx())
+                drawLine(
+                    color = FolioDivider,
+                    start = Offset(0f, chartHeight),
+                    end = Offset(size.width, chartHeight),
+                    strokeWidth = 1.dp.toPx(),
+                )
+                ordered.forEachIndexed { index, month ->
+                    if (month.count <= 0 || maxCount <= 0) return@forEachIndexed
+                    val centerX = step * index + step / 2
+                    val left = centerX - barWidth / 2
+                    val segments = listOf(
+                        (chartHeight * month.assetToAsset / maxCount) to swapColor,
+                        (chartHeight * month.assetToCash / maxCount) to FolioBlue,
+                        (chartHeight * month.cashToAsset / maxCount) to FolioGold,
+                    ).filter { (height, _) -> height > 0f }
+                    var bottom = chartHeight
+                    segments.forEachIndexed { segmentIndex, (height, color) ->
+                        val segmentTop = bottom - height
+                        if (segmentIndex == segments.lastIndex) {
+                            // Only the top of the bar is rounded; the junctions
+                            // between colors and the baseline stay square.
+                            val radius = 2.dp.toPx()
+                                .coerceAtMost(minOf(barWidth / 2f, height))
+                            val path = Path().apply {
+                                moveTo(left, bottom)
+                                lineTo(left, segmentTop + radius)
+                                quadraticTo(left, segmentTop, left + radius, segmentTop)
+                                lineTo(left + barWidth - radius, segmentTop)
+                                quadraticTo(
+                                    left + barWidth,
+                                    segmentTop,
+                                    left + barWidth,
+                                    segmentTop + radius,
+                                )
+                                lineTo(left + barWidth, bottom)
+                                close()
+                            }
+                            drawPath(path, color = color)
+                        } else {
+                            drawRect(
+                                color = color,
+                                topLeft = Offset(left, segmentTop),
+                                size = Size(barWidth, height),
+                            )
+                        }
+                        bottom -= height
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = ordered.firstOrNull()?.month?.toString() ?: "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioMuted,
+                )
+                Text(
+                    text = ordered.lastOrNull()?.month?.toString() ?: "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioMuted,
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(
+                    text = "■ 现金→资产",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FolioGold,
+                )
+                Text(
+                    text = "■ 资产→现金",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FolioBlue,
+                )
+                if (hasAssetSwap) {
+                    Text(
+                        text = "■ 资产→资产",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = swapColor,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RebalanceFlowBlock(flows: List<RebalanceCategoryFlow>) {
+    // Net flow per category: positive = net bought into the category,
+    // negative = net sold out of it.
+    val nets = flows
+        .map { it to it.inCny.subtract(it.outCny) }
+        .sortedByDescending { (_, net) -> net }
+    val maxGain = nets.map { it.second }.maxOrNull()?.coerceAtLeast(BigDecimal.ZERO)
+        ?: BigDecimal.ZERO
+    val maxLoss = nets.map { it.second }.minOrNull()?.abs() ?: BigDecimal.ZERO
+    val combined = maxGain.add(maxLoss)
+    val zeroFraction = if (combined.signum() > 0) {
+        maxLoss.divide(combined, 10, RoundingMode.HALF_UP).toFloat()
+    } else {
+        0.5f
+    }
+    WhiteBlock {
+        Column(modifier = Modifier.padding(top = 14.dp)) {
+            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                SectionTitle("调仓流向")
+            }
+            nets.forEachIndexed { index, (flow, net) ->
+                if (index > 0) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 16.dp),
+                        color = FolioDivider,
+                    )
+                }
+                RebalanceFlowRow(flow, net, maxGain, maxLoss, zeroFraction)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RebalanceFlowRow(
+    flow: RebalanceCategoryFlow,
+    net: BigDecimal,
+    maxGain: BigDecimal,
+    maxLoss: BigDecimal,
+    zeroFraction: Float,
+) {
+    val color = pnlColor(net)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(color.copy(alpha = 0.10f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = categoryIcon(flow.categoryId),
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = flow.categoryName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = FolioInk,
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "${flow.outCount + flow.inCount} 笔",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioMuted,
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(5.dp),
+            ) {
+                val barHeight = size.height
+                val radius = CornerRadius(barHeight / 2f)
+                drawRoundRect(
+                    color = Color(0xFFF1F1F1),
+                    topLeft = Offset(0f, 0f),
+                    size = Size(size.width, barHeight),
+                    cornerRadius = radius,
+                )
+                val zeroX = size.width * zeroFraction
+                if (net.signum() > 0 && maxGain.signum() > 0) {
+                    val barWidth = (net.toFloat() / maxGain.toFloat())
+                        .coerceIn(0f, 1f) * (size.width - zeroX)
+                    if (barWidth > 0f) {
+                        drawRoundRect(
+                            color = color,
+                            topLeft = Offset(zeroX, 0f),
+                            size = Size(barWidth, barHeight),
+                            cornerRadius = radius,
+                        )
+                    }
+                } else if (net.signum() < 0 && maxLoss.signum() > 0) {
+                    val barWidth = (net.abs().toFloat() / maxLoss.toFloat())
+                        .coerceIn(0f, 1f) * zeroX
+                    if (barWidth > 0f) {
+                        drawRoundRect(
+                            color = color,
+                            topLeft = Offset(zeroX - barWidth, 0f),
+                            size = Size(barWidth, barHeight),
+                            cornerRadius = radius,
+                        )
+                    }
+                }
+                drawLine(
+                    color = FolioMuted.copy(alpha = 0.45f),
+                    start = Offset(zeroX, -1.dp.toPx()),
+                    end = Offset(zeroX, barHeight + 1.dp.toPx()),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = signedCny(net),
+            style = MaterialTheme.typography.titleSmall,
+            color = color,
+        )
+    }
+}
+
+private fun signedCny(value: BigDecimal): String = when {
+    value.signum() > 0 -> "+" + formatCny(value)
+    value.signum() < 0 -> "-" + formatCny(value.abs())
+    else -> formatCny(value)
+}
+
+@Composable
+private fun RebalancePairsBlock(pairs: List<RebalancePair>) {
+    WhiteBlock {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            SectionTitle("最频繁的调仓方向")
+            pairs.forEachIndexed { index, pair ->
+                if (index > 0) {
+                    HorizontalDivider(color = FolioDivider)
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "${pair.fromName} → ${pair.toName}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = FolioInk,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "${pair.count} 次",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FolioMuted,
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = formatCny(pair.amountCny),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FolioInk,
+                    )
+                }
+            }
+        }
+    }
+}
+
 private fun LazyListScope.distributionContent(
     title: String,
     rows: List<DistributionRowData>,
     total: BigDecimal,
 ) {
-    item {
-        BigValueHeader(
-            label = "当前总资产",
-            value = formatCny(total),
-            color = FolioInk,
-        )
-    }
     item {
         if (rows.isEmpty()) {
             EmptyBlock("暂无$title 数据。")
@@ -1065,8 +1380,8 @@ private fun HistorySummary(
     }
     val marketColor = when {
         marketPnl == null || marketPnl.signum() == 0 -> FolioInk
-        marketPnl.signum() > 0 -> FolioGreen
-        else -> FolioCoral
+        marketPnl.signum() > 0 -> FolioCoral
+        else -> FolioGreen
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1615,39 +1930,6 @@ private fun FlowRowItem(flow: MonthFlow) {
 }
 
 @Composable
-private fun ExpenseRowItem(expense: MonthExpense) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "${expense.month.year} 年 ${expense.month.monthValue} 月",
-                style = MaterialTheme.typography.bodyLarge,
-                color = FolioInk,
-            )
-            if (expense.byCategory.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = expense.byCategory.entries.joinToString(" · ") {
-                        "${it.key} ${formatCny(it.value)}"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FolioMuted,
-                )
-            }
-        }
-        Text(
-            text = formatCny(expense.total),
-            style = MaterialTheme.typography.titleSmall,
-            color = FolioInk,
-        )
-    }
-}
-
-@Composable
 private fun DistributionRowItem(row: DistributionRowData, total: BigDecimal) {
     val share = if (total.signum() > 0) {
         row.value.divide(total, 6, java.math.RoundingMode.HALF_UP)
@@ -1977,63 +2259,5 @@ private fun monthlyFlows(
                 }
             }
             MonthFlow(month, inflow, outflow)
-        }
-}
-
-private const val FEE_LOSS_LABEL = "手续费/损耗"
-
-private fun monthlyExpenses(
-    data: PortfolioData,
-    categoryNames: Map<String, String>,
-    fxRates: Map<String, BigDecimal>,
-    range: DateRange,
-): List<MonthExpense> {
-    val map = linkedMapOf<YearMonth, MutableMap<String, BigDecimal>>()
-    val linkedFeeTransfers = data.events
-        .filterIsInstance<ExpenseEvent>()
-        .filter { it.linkedTransferId != null && it.note in setOf("转账手续费", "转账损耗") }
-        .mapNotNull { it.linkedTransferId }
-        .toSet()
-    data.events.filterIsInstance<ExpenseEvent>().forEach { event ->
-        val date = event.localDate()
-        if (date.isBefore(range.from) || date.isAfter(range.to)) return@forEach
-        val amountCny = fxToCny(event.currency, fxRates)
-            ?.let { event.amount.multiply(it).toCnyAmount() } ?: return@forEach
-        val month = YearMonth.from(parseEventTime(event.date))
-        val categories = map.getOrPut(month) { linkedMapOf() }
-        val name = categoryNames[event.categoryId] ?: event.categoryId
-        categories[name] = (categories[name] ?: BigDecimal.ZERO).add(amountCny)
-    }
-    data.events.filterIsInstance<TransferEvent>().forEach { event ->
-        if (event.lossAmount.signum() == 0 && (event.feeAmount?.signum() ?: 0) == 0) {
-            return@forEach
-        }
-        // Old data records these as linked expenses; do not count them twice.
-        if (event.id in linkedFeeTransfers) return@forEach
-        val date = event.localDate()
-        if (date.isBefore(range.from) || date.isAfter(range.to)) return@forEach
-        var feeLossCny = fxToCny(event.lossCurrency, fxRates)
-            ?.let { event.lossAmount.multiply(it).toCnyAmount() } ?: BigDecimal.ZERO
-        val feeAmount = event.feeAmount
-        val feeCurrency = event.feeCurrency
-        if (feeAmount != null && feeCurrency != null) {
-            fxToCny(feeCurrency, fxRates)?.let {
-                feeLossCny = feeLossCny.add(feeAmount.multiply(it).toCnyAmount())
-            }
-        }
-        if (feeLossCny.signum() == 0) return@forEach
-        val month = YearMonth.from(parseEventTime(event.date))
-        val categories = map.getOrPut(month) { linkedMapOf() }
-        categories[FEE_LOSS_LABEL] =
-            (categories[FEE_LOSS_LABEL] ?: BigDecimal.ZERO).add(feeLossCny)
-    }
-    return map.entries
-        .sortedBy { it.key }
-        .map { (month, categories) ->
-            MonthExpense(
-                month = month,
-                total = categories.values.fold(BigDecimal.ZERO) { acc, value -> acc.add(value) },
-                byCategory = categories,
-            )
         }
 }

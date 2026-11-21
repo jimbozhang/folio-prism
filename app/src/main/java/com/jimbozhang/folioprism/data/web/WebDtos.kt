@@ -136,11 +136,24 @@ data class ChartPointDto(
     val incomplete: Boolean = false,
 )
 
+/** One day with a non-market change; positive = money into the chart's scope. */
+@Serializable
+data class ChartFlowDto(
+    val date: String,
+    val netCny: String,
+)
+
 @Serializable
 data class ChartSummaryDto(
     val startValue: String? = null,
     val endValue: String? = null,
     val totalPnl: String? = null,
+    /** Gross non-market inflow within the range. */
+    val inflowCny: String? = null,
+    /** Gross non-market outflow within the range (positive magnitude). */
+    val outflowCny: String? = null,
+    /** endValue - startValue - (inflow - outflow). */
+    val marketPnlCny: String? = null,
 )
 
 @Serializable
@@ -165,6 +178,10 @@ data class ChartDto(
     val category: CategoryRefDto? = null,
     val categoryPnl: List<CategoryPnlDto> = emptyList(),
     val logs: List<String> = emptyList(),
+    /** Days with non-market changes, for the flow markers. */
+    val flows: List<ChartFlowDto> = emptyList(),
+    /** The curve restated without capital flows. */
+    val adjustedPoints: List<ChartPointDto> = emptyList(),
 )
 
 @Serializable
@@ -178,14 +195,49 @@ data class FlowMonthDto(
 data class FlowsDto(val months: List<FlowMonthDto>)
 
 @Serializable
-data class ExpenseMonthDto(
+data class RebalanceMonthDto(
     val month: String,
-    val totalCny: String,
-    val byCategory: Map<String, String>,
+    val cashToAsset: Int,
+    val assetToCash: Int,
+    val assetToAsset: Int,
+    val count: Int,
+    val amountCny: String,
 )
 
 @Serializable
-data class ExpensesDto(val months: List<ExpenseMonthDto>)
+data class RebalanceFlowDto(
+    val categoryId: String,
+    val name: String,
+    val outCny: String,
+    val inCny: String,
+    val outCount: Int,
+    val inCount: Int,
+)
+
+@Serializable
+data class RebalancePairDto(
+    val fromName: String,
+    val toName: String,
+    val count: Int,
+    val amountCny: String,
+)
+
+@Serializable
+data class RebalanceStatsDto(
+    val count: Int,
+    val dayCount: Int,
+    val averageIntervalDays: Int? = null,
+    val recent30DaysCount: Int,
+    val amountCny: String,
+    val feeLossCny: String,
+    val months: List<RebalanceMonthDto> = emptyList(),
+    val categoryFlows: List<RebalanceFlowDto> = emptyList(),
+    val topPairs: List<RebalancePairDto> = emptyList(),
+    val accountMoveCount: Int,
+    val fxSwapCount: Int,
+    val cashCategoryCount: Int,
+    val incomplete: Boolean,
+)
 
 @Serializable
 data class DividendGroupDto(
