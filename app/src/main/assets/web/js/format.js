@@ -115,6 +115,25 @@ const Fmt = (() => {
     }, '0');
   }
 
+  /* Rounds a decimal string to a money amount: 2 decimals, half away from zero. */
+  function money(value) {
+    const parts = decParts(value);
+    if (parts === null) return null;
+    const scale = parts.frac.length;
+    const raw = BigInt((parts.int + parts.frac) || '0') * (parts.neg ? -1n : 1n);
+    let rounded;
+    if (scale <= 2) {
+      rounded = raw * (10n ** BigInt(2 - scale));
+    } else {
+      const div = 10n ** BigInt(scale - 2);
+      const abs = raw < 0n ? -raw : raw;
+      const q = abs / div;
+      const r = abs % div;
+      rounded = (r * 2n >= div ? q + 1n : q) * (raw < 0n ? -1n : 1n);
+    }
+    return formatScaled(rounded, 2);
+  }
+
   function plain(value, digits) {
     const n = num(value);
     if (n === null) return '--';
@@ -221,7 +240,7 @@ const Fmt = (() => {
 
   return {
     num, cny, cnyCompact, plain, percent, pctPoints, quantity,
-    native, signedNative, mul, add, sum, bytes, datePart, timePart, timestamp,
+    native, signedNative, mul, add, sum, money, bytes, datePart, timePart, timestamp,
     nowLocal, datetimeLocal, dateLabel,
   };
 })();

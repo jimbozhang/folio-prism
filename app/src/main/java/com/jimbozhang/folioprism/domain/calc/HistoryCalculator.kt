@@ -1,6 +1,7 @@
 package com.jimbozhang.folioprism.domain.calc
 
 import com.jimbozhang.folioprism.domain.history.CategoryPnl
+import com.jimbozhang.folioprism.domain.history.DailyFlow
 import com.jimbozhang.folioprism.domain.history.DailyPortfolioValue
 import com.jimbozhang.folioprism.domain.history.HistoryResult
 import com.jimbozhang.folioprism.domain.history.PriceCacheData
@@ -18,7 +19,10 @@ import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.money.toCnyAmount
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.LocalDate
+
+private const val RATIO_SCALE = 10
 
 object HistoryCalculator {
 
@@ -91,6 +95,21 @@ object HistoryCalculator {
             map[key] = (map[key] ?: BigDecimal.ZERO).add(value)
         }
 
+        // Per-day non-market changes back the curve's flow markers and the
+        // flow-adjusted ("market only") curve.
+        val dailyExternal = linkedMapOf<LocalDate, MutableMap<String, BigDecimal>>()
+        val dailyInternal = linkedMapOf<LocalDate, MutableMap<String, BigDecimal>>()
+
+        fun addDaily(
+            target: MutableMap<LocalDate, MutableMap<String, BigDecimal>>,
+            date: LocalDate,
+            categoryId: String,
+            value: BigDecimal,
+        ) {
+            val byCategory = target.getOrPut(date) { linkedMapOf() }
+            byCategory[categoryId] = (byCategory[categoryId] ?: BigDecimal.ZERO).add(value)
+        }
+
         data.events.forEach { event ->
             val date = event.localDate()
             if (!date.isAfter(from) || date.isAfter(to)) return@forEach
@@ -116,6 +135,8 @@ object HistoryCalculator {
                     ) {
                         add(flows, fromCategory, fromValueCny.negate())
                         add(flows, toCategory, toValueCny)
+                        addDaily(dailyInternal, date, fromCategory, fromValueCny.negate())
+                        addDaily(dailyInternal, date, toCategory, toValueCny)
                     }
                     // The embedded fee/loss is stored in its native currency.
                     // An extra fee paid from a separate cash account is already
@@ -149,6 +170,8 @@ object HistoryCalculator {
                     ) {
                         add(flows, sourceCategory, amountCny.negate())
                         add(flows, destinationCategory, amountCny)
+                        addDaily(dailyInternal, date, sourceCategory, amountCny.negate())
+                        addDaily(dailyInternal, date, destinationCategory, amountCny)
                     }
                 }
 
@@ -163,6 +186,7 @@ object HistoryCalculator {
                             amountCny.negate()
                         }
                         add(flows, category, signed)
+                        addDaily(dailyExternal, date, category, signed)
                     }
                 }
 
@@ -180,6 +204,8 @@ object HistoryCalculator {
                         if (cashCategory != null && cashCategory != event.categoryId) {
                             add(attribution, cashCategory, amountCny)
                             add(attribution, event.categoryId, amountCny.negate())
+                            addDaily(dailyInternal, date, cashCategory, amountCny)
+                            addDaily(dailyInternal, date, event.categoryId, amountCny.negate())
                         }
                     }
                 }
@@ -197,6 +223,7 @@ object HistoryCalculator {
                     }
                     if (category != null && value != null) {
                         add(flows, category, value)
+                        addDaily(dailyExternal, date, category, value)
                     }
                 }
 
@@ -220,7 +247,9 @@ object HistoryCalculator {
                             else -> event.amount
                         }
                         if (native != null) {
-                            add(flows, category, native.multiply(rate).toCnyAmount())
+                            val value = native.multiply(rate).toCnyAmount()
+                            add(flows, category, value)
+                            addDaily(dailyExternal, date, category, value)
                         }
                     }
                 }
@@ -251,6 +280,25 @@ object HistoryCalculator {
                 )
             }
 
+        val dailyFlows = days.mapNotNull { day ->
+            val external = dailyExternal[day]
+            val internal = dailyInternal[day]
+            if (external == null && internal == null) {
+                null
+            } else {
+                DailyFlow(
+                    date = day,
+                    externalByCategory = external.orEmpty(),
+                    internalByCategory = internal.orEmpty(),
+                )
+            }
+        }
+        val adjustedCurve = adjustedCurve(
+            curve = curve,
+            dailyFlows = dailyFlows,
+            categoryIds = data.settings.categories.map { it.id },
+        )
+
         if (curve.any { it.incomplete }) {
             logs += "部分日期缺少历史价格，曲线/盈亏可能不完整"
         }
@@ -260,7 +308,73 @@ object HistoryCalculator {
             curve = curve,
             categoryPnl = categoryPnl,
             logs = logs,
+            dailyFlows = dailyFlows,
+            adjustedCurve = adjustedCurve,
         )
+    }
+
+    /**
+     * Restates [curve] without the effect of capital flows: each day's market
+     * return (value change minus that day's flow) is applied to the previous
+     * adjusted value. The adjusted line therefore only reflects prices,
+     * dividends and fees.
+     */
+    private fun adjustedCurve(
+        curve: List<DailyPortfolioValue>,
+        dailyFlows: List<DailyFlow>,
+        categoryIds: List<String>,
+    ): List<DailyPortfolioValue> {
+        val flowByDate = dailyFlows.associateBy { it.date }
+        val total = adjustStream(
+            values = curve.map { it.totalCny },
+            flows = curve.map { flowByDate[it.date]?.netTotal ?: BigDecimal.ZERO },
+        )
+        val categories = categoryIds.associateWith { categoryId ->
+            adjustStream(
+                values = curve.map { it.categoryValues[categoryId] },
+                flows = curve.map { flowByDate[it.date]?.netFor(categoryId) ?: BigDecimal.ZERO },
+            )
+        }
+        return curve.mapIndexed { index, point ->
+            DailyPortfolioValue(
+                date = point.date,
+                totalCny = total[index],
+                categoryValues = categoryIds.associateWith { categories.getValue(it)[index] },
+                incomplete = point.incomplete,
+            )
+        }
+    }
+
+    /**
+     * Time-weighted restatement of one value stream. A stream that is still
+     * empty is seeded by its first positive value; missing (null) days are kept
+     * as gaps and do not change the running index.
+     */
+    private fun adjustStream(
+        values: List<BigDecimal?>,
+        flows: List<BigDecimal>,
+    ): List<BigDecimal?> {
+        var previous: BigDecimal? = null
+        var index: BigDecimal? = null
+        return values.mapIndexed { day, value ->
+            if (value == null) return@mapIndexed null
+            val current = index
+            index = when {
+                current == null -> value.takeIf { it.signum() > 0 }
+                previous != null && previous.signum() > 0 -> {
+                    val growth = value
+                        .subtract(previous)
+                        .subtract(flows[day])
+                        .divide(previous, RATIO_SCALE, RoundingMode.HALF_UP)
+                    current.multiply(BigDecimal.ONE.add(growth))
+                }
+                // A stream that starts from zero: seed it where it appears.
+                value.signum() > 0 -> value
+                else -> current
+            }
+            previous = value
+            index?.setScale(2, RoundingMode.HALF_UP)
+        }
     }
 
     /**

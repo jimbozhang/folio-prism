@@ -111,6 +111,54 @@ class HistoryCalculatorTest {
     }
 
     @Test
+    fun externalDepositShowsAsDailyFlowButNotInAdjustedCurve() {
+        val events = baseEvents() + ExternalEvent(
+            direction = ExternalDirection.IN,
+            classification = ExternalClassification.CAPITAL,
+            position = ref(INST_A, CASH_CNY),
+            amount = bd("500"),
+            currency = "CNY",
+            date = "2026-01-10T00:00:00+08:00",
+        )
+        val result = HistoryCalculator.build(data(events), cache(), emptyMap(), from, to)
+
+        val depositDay = result.dailyFlows.first { it.date == LocalDate.of(2026, 1, 10) }
+        assertDecimal("500", depositDay.netTotal)
+        assertDecimal("500", depositDay.externalByCategory[CategoryIds.CASH])
+
+        // The actual curve jumps by the deposit, the adjusted curve does not:
+        // it only carries the fund's 10 -> 12 price move (1100 -> 1113.75).
+        assertDecimal("1620", result.curve.last().totalCny)
+        assertDecimal("1100", result.adjustedCurve[9].totalCny)
+        assertDecimal("1113.75", result.adjustedCurve.last().totalCny)
+    }
+
+    @Test
+    fun transferFlowIsInternalAndLeavesCurvesUnmoved() {
+        val events = baseEvents() + transfer(
+            from = ref(INST_A, CASH_CNY),
+            to = ref(INST_A, FUND),
+            fromQuantity = "100",
+            toQuantity = "10",
+            toPrice = "10",
+            date = "2026-01-10T00:00:00+08:00",
+        )
+        val result = HistoryCalculator.build(data(events), cache(), emptyMap(), from, to)
+
+        val day = result.dailyFlows.first { it.date == LocalDate.of(2026, 1, 10) }
+        assertDecimal("0", day.netTotal)
+        assertDecimal("-100", day.internalByCategory[CategoryIds.CASH])
+        assertDecimal("100", day.internalByCategory[CategoryIds.GROWTH])
+
+        // A reallocation day leaves both adjusted category curves flat, and
+        // the adjusted total only grows with the fund's price.
+        val dayPoint = result.adjustedCurve[9]
+        assertDecimal("1000", dayPoint.categoryValues[CategoryIds.CASH])
+        assertDecimal("100", dayPoint.categoryValues[CategoryIds.GROWTH])
+        assertDecimal("1140", result.adjustedCurve.last().totalCny)
+    }
+
+    @Test
     fun openingInsideRangeIsCapitalFlowNotPnl() {
         val events = baseEvents() + opening(
             ref(INST_A, FUND),

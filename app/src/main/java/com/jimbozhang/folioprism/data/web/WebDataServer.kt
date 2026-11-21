@@ -115,9 +115,9 @@ class WebDataServer(
                 json(api.flows(dateParam(session, "from"), dateParam(session, "to")))
             }
 
-            "/api/expenses" -> {
+            "/api/rebalance" -> {
                 if (method != Method.GET) return methodNotAllowed(session)
-                json(api.expenses(dateParam(session, "from"), dateParam(session, "to")))
+                json(api.rebalance(dateParam(session, "from"), dateParam(session, "to")))
             }
 
             "/api/dividends" -> {

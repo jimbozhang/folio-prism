@@ -12,6 +12,8 @@ import com.jimbozhang.folioprism.data.store.PortfolioRepository
 import com.jimbozhang.folioprism.domain.calc.EventReplay
 import com.jimbozhang.folioprism.domain.calc.HistoryCalculator
 import com.jimbozhang.folioprism.domain.history.HistoryResult
+import com.jimbozhang.folioprism.domain.model.Instrument
+import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.QuoteMode
 import com.jimbozhang.folioprism.domain.quote.QuoteFailure
@@ -70,6 +72,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // range request so rapid range changes don't leave an orphaned network fetch
     // running for a range the user has already left.
     private var historyJob: Job? = null
+
+    // Instrument ids with an in-flight on-demand quote fetch, so repeated
+    // picks do not issue duplicate requests.
+    private val quoteFetchesInFlight = mutableSetOf<String>()
 
     init {
         load()
@@ -194,6 +200,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val MSG_FETCHING = "正在获取历史行情…"
+    }
+
+    /**
+     * Fetches the quote of a single instrument that has no position yet, e.g.
+     * one just added, and merges it into the current snapshot so editors can
+     * prefill its price. Charts and totals are unaffected: only quoted price
+     * data is added.
+     */
+    fun fetchQuoteFor(instrument: Instrument) {
+        if (instrument.kind != InstrumentKind.QUOTED) return
+        if (instrument.id in quoteFetchesInFlight) return
+        val data = currentData() ?: return
+        quoteFetchesInFlight += instrument.id
+        viewModelScope.launch {
+            try {
+                val snapshot = runCatching {
+                    quoteService.fetch(data, emptyMap(), extraInstruments = listOf(instrument))
+                }.getOrNull() ?: return@launch
+                val ready = _state.value as? AppUiState.Ready ?: return@launch
+                val merged = ready.quotes.copy(
+                    quotes = ready.quotes.quotes + snapshot.quotes,
+                    fxRates = ready.quotes.fxRates + snapshot.fxRates,
+                )
+                _state.value = ready.copy(quotes = merged)
+            } finally {
+                quoteFetchesInFlight -= instrument.id
+            }
+        }
     }
 
     fun setManualPrice(instrumentId: String, price: BigDecimal) {

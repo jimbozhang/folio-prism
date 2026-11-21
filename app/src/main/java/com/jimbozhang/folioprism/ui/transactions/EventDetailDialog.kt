@@ -49,6 +49,7 @@ import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.PositionRef
 import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.money.toMoneyAmount
 import com.jimbozhang.folioprism.ui.components.formatNative
 import com.jimbozhang.folioprism.ui.components.formatQuantity
 import com.jimbozhang.folioprism.ui.theme.FolioCoral
@@ -253,12 +254,15 @@ private fun transferRows(data: PortfolioData, event: TransferEvent): List<Pair<S
         rows += "转入单价" to formatNative(it, currencyOf(data, event.to))
     }
     if (event.lossAmount.signum() != 0) {
-        rows += "损耗" to signedNative(event.lossAmount, event.lossCurrency)
+        rows += "损耗" to signedNative(event.lossAmount.toMoneyAmount(), event.lossCurrency)
     }
     val feeAmount = event.feeAmount
     if (feeAmount != null && feeAmount.signum() != 0) {
         val position = event.feePosition?.let { positionLabel(data, it) }
-        val fee = signedNative(feeAmount, event.feeCurrency ?: currencyOf(data, event.from))
+        val fee = signedNative(
+            feeAmount.toMoneyAmount(),
+            event.feeCurrency ?: currencyOf(data, event.from),
+        )
         rows += "手续费" to (position?.let { "$it · $fee" } ?: fee)
     }
     return rows

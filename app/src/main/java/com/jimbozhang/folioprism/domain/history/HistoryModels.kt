@@ -42,6 +42,29 @@ data class DailyPortfolioValue(
     val incomplete: Boolean,
 )
 
+/**
+ * Non-market value changes of one day, split by category.
+ *
+ * [externalByCategory] is money entering or leaving the portfolio from the
+ * outside (deposits, withdrawals, openings, adjustments); [internalByCategory]
+ * is movement between categories (transfers, dividends into cash, expenses
+ * paid from another category). Internal entries sum to zero across categories.
+ */
+data class DailyFlow(
+    val date: LocalDate,
+    val externalByCategory: Map<String, BigDecimal> = emptyMap(),
+    val internalByCategory: Map<String, BigDecimal> = emptyMap(),
+) {
+    /** Net flow of one category, positive = into the category. */
+    fun netFor(categoryId: String): BigDecimal =
+        (externalByCategory[categoryId] ?: BigDecimal.ZERO) +
+            (internalByCategory[categoryId] ?: BigDecimal.ZERO)
+
+    /** Net external flow of the whole portfolio; internal movement cancels out. */
+    val netTotal: BigDecimal
+        get() = externalByCategory.values.fold(BigDecimal.ZERO, BigDecimal::add)
+}
+
 data class CategoryPnl(
     val categoryId: String,
     val categoryName: String,
@@ -55,4 +78,12 @@ data class HistoryResult(
     val curve: List<DailyPortfolioValue>,
     val categoryPnl: List<CategoryPnl>,
     val logs: List<String>,
+    /** Days with non-market value changes, for the flow markers on the curve. */
+    val dailyFlows: List<DailyFlow> = emptyList(),
+    /**
+     * The same curve restated so that capital flows no longer move it: each
+     * day's market return is applied to the previous adjusted value, so the
+     * line only rises and falls with prices, dividends and fees.
+     */
+    val adjustedCurve: List<DailyPortfolioValue> = emptyList(),
 )

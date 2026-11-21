@@ -124,10 +124,12 @@ class WebDataServerTest {
     }
 
     @Test
-    fun flowsAndExpensesAreServed() {
+    fun flowsAndRebalanceAreServed() {
         assertEquals(200, request("GET", "/api/flows?from=2026-01-01&to=2026-02-01").first)
-        assertEquals(200, request("GET", "/api/expenses?from=2026-01-01&to=2026-02-01").first)
+        assertEquals(200, request("GET", "/api/rebalance?from=2026-01-01&to=2026-02-01").first)
         assertEquals(400, request("GET", "/api/flows?from=2026-02-01&to=2026-01-01").first)
+        assertEquals(400, request("GET", "/api/rebalance?from=2026-02-01&to=2026-01-01").first)
+        assertEquals(404, request("GET", "/api/expenses?from=2026-01-01&to=2026-02-01").first)
     }
 
     @Test
@@ -266,9 +268,19 @@ class WebDataServerTest {
             return FlowsDto(emptyList())
         }
 
-        override suspend fun expenses(from: LocalDate, to: LocalDate): ExpensesDto {
+        override suspend fun rebalance(from: LocalDate, to: LocalDate): RebalanceStatsDto {
             require(!from.isAfter(to)) { "开始日期不能晚于结束日期" }
-            return ExpensesDto(emptyList())
+            return RebalanceStatsDto(
+                count = 0,
+                dayCount = 0,
+                recent30DaysCount = 0,
+                amountCny = "0",
+                feeLossCny = "0",
+                accountMoveCount = 0,
+                fxSwapCount = 0,
+                cashCategoryCount = 0,
+                incomplete = false,
+            )
         }
 
         override suspend fun dividends(from: LocalDate, to: LocalDate): DividendsDto {

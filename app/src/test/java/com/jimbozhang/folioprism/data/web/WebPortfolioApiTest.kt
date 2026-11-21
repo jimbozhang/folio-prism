@@ -27,6 +27,7 @@ import com.jimbozhang.folioprism.domain.model.IncomeKind
 import com.jimbozhang.folioprism.domain.model.Institution
 import com.jimbozhang.folioprism.domain.model.OpeningEvent
 import com.jimbozhang.folioprism.domain.model.PortfolioData
+import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.money.bd
 import com.jimbozhang.folioprism.domain.quote.Quote
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
@@ -228,7 +229,7 @@ class WebPortfolioApiTest {
     }
 
     @Test
-    fun flowsAndExpensesAggregateByMonth() {
+    fun flowsAggregateByMonth() {
         val external = ExternalEvent(
             direction = ExternalDirection.IN,
             classification = ExternalClassification.CAPITAL,
@@ -237,23 +238,34 @@ class WebPortfolioApiTest {
             currency = "CNY",
             date = "2026-02-10T00:00:00+08:00",
         )
-        val expense = ExpenseEvent(
-            amount = bd("30"),
-            currency = "CNY",
-            categoryId = CategoryIds.CASH,
-            date = "2026-02-11T00:00:00+08:00",
-        )
-        val env = environment(baseData(external, expense))
+        val env = environment(baseData(external))
 
         val flows = runBlocking { env.api.flows(LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28)) }
         assertEquals(1, flows.months.size)
         assertEquals("2026-02", flows.months[0].month)
         assertDecimal("100", flows.months[0].inflowCny.toBigDecimal())
         assertDecimal("0", flows.months[0].outflowCny.toBigDecimal())
+    }
 
-        val expenses = runBlocking { env.api.expenses(LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28)) }
-        assertEquals(1, expenses.months.size)
-        assertDecimal("30", expenses.months[0].totalCny.toBigDecimal())
+    @Test
+    fun rebalanceCountsTradesBetweenDifferentInstruments() {
+        val fund = quotedInstrument(FUND, CategoryIds.GROWTH, "CNY", "000001")
+        val trade = TransferEvent(
+            from = ref(INST_A, CASH_CNY),
+            to = ref(INST_A, FUND),
+            fromQuantity = bd("100"),
+            toQuantity = bd("50"),
+            toPrice = bd("2"),
+            lossAmount = bd("0"),
+            date = "2026-02-10T00:00:00+08:00",
+        )
+        val env = environment(baseData(trade))
+
+        val stats = runBlocking { env.api.rebalance(LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28)) }
+        assertEquals(1, stats.count)
+        assertEquals(1, stats.dayCount)
+        assertDecimal("100", stats.amountCny.toBigDecimal())
+        assertEquals(1, stats.months.single().cashToAsset)
     }
 
     @Test

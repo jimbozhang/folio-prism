@@ -5,6 +5,7 @@ import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.instrument
+import com.jimbozhang.folioprism.domain.model.positionRefs
 import com.jimbozhang.folioprism.domain.quote.Quote
 import com.jimbozhang.folioprism.domain.quote.QuoteFailure
 import com.jimbozhang.folioprism.domain.quote.QuoteFailureKind
@@ -40,16 +41,27 @@ class QuoteService(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * Fetches quotes for the held positions plus any [extraInstruments] that
+     * have no position yet — e.g. an instrument just added, whose price the
+     * transfer editor needs before the first transaction exists.
+     */
     suspend fun fetch(
         data: PortfolioData,
         positions: Map<PositionKey, BigDecimal>,
+        extraInstruments: List<Instrument> = emptyList(),
     ): QuoteSnapshot = coroutineScope {
         val logs = mutableListOf<String>()
         val failures = mutableListOf<QuoteFailure>()
         val quotes = linkedMapOf<String, Quote>()
         val fxRates = linkedMapOf<String, BigDecimal>()
 
-        val required = requiredInstruments(data, positions, logs)
+        val required = requiredInstruments(data, positions, logs).toMutableList()
+        extraInstruments.forEach { instrument ->
+            if (required.none { it.instrument.id == instrument.id }) {
+                required += RequiredInstrument(instrument = instrument, institutionIds = emptyList())
+            }
+        }
         if (required.isEmpty()) {
             return@coroutineScope QuoteSnapshot(logs = logs)
         }
@@ -72,6 +84,18 @@ class QuoteService(
             }
         ) {
             fxCurrencies += "USD"
+        }
+        // The history chart values positions at past dates too, so a currency
+        // that was held earlier must be converted even when the position has
+        // since been closed.
+        data.events.forEach { event ->
+            event.positionRefs().forEach { ref ->
+                val instrument = data.instrument(ref.instrumentId) ?: return@forEach
+                val currency = instrument.currency.uppercase()
+                if (currency !in setOf("CNY", "CNH")) {
+                    fxCurrencies += currency
+                }
+            }
         }
 
         if (fxCurrencies.isNotEmpty()) {

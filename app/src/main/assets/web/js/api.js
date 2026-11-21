@@ -48,8 +48,8 @@ const Api = {
     return this.get('/api/flows?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to));
   },
 
-  expenses(from, to) {
-    return this.get('/api/expenses?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to));
+  rebalance(from, to) {
+    return this.get('/api/rebalance?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to));
   },
 
   dividends(from, to) {

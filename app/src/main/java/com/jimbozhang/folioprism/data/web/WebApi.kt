@@ -54,7 +54,7 @@ interface WebApi {
 
     suspend fun flows(from: LocalDate, to: LocalDate): FlowsDto
 
-    suspend fun expenses(from: LocalDate, to: LocalDate): ExpensesDto
+    suspend fun rebalance(from: LocalDate, to: LocalDate): RebalanceStatsDto
 
     suspend fun dividends(from: LocalDate, to: LocalDate): DividendsDto
 

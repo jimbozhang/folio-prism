@@ -6,6 +6,7 @@ import com.jimbozhang.folioprism.data.store.PortfolioRepository
 import com.jimbozhang.folioprism.domain.calc.DividendGroup
 import com.jimbozhang.folioprism.domain.calc.DividendStatsCalculator
 import com.jimbozhang.folioprism.domain.calc.EventReplay
+import com.jimbozhang.folioprism.domain.calc.RebalanceStatsCalculator
 import com.jimbozhang.folioprism.domain.calc.SnapshotCalculator
 import com.jimbozhang.folioprism.domain.history.DateRange
 import com.jimbozhang.folioprism.domain.model.Event
@@ -232,14 +233,42 @@ class WebPortfolioApi(
         return when (type) {
             "assets" -> {
                 val pnls = result.categoryPnl.mapNotNull { it.pnlCny }
+                val values = result.curve.mapNotNull { it.totalCny }
+                val start = values.firstOrNull()
+                val end = values.lastOrNull()
+                var inflow = BigDecimal.ZERO
+                var outflow = BigDecimal.ZERO
+                result.dailyFlows.forEach { flow ->
+                    flow.externalByCategory.values.forEach { amount ->
+                        if (amount.signum() > 0) {
+                            inflow = inflow.add(amount)
+                        } else if (amount.signum() < 0) {
+                            outflow = outflow.add(amount.abs())
+                        }
+                    }
+                }
                 base.copy(
                     points = result.curve.map {
                         ChartPointDto(it.date.toString(), it.totalCny.plainOrNull(), it.incomplete)
                     },
+                    adjustedPoints = result.adjustedCurve.map {
+                        ChartPointDto(it.date.toString(), it.totalCny.plainOrNull(), it.incomplete)
+                    },
+                    flows = result.dailyFlows.mapNotNull { flow ->
+                        val net = flow.netTotal
+                        if (net.signum() == 0) null else ChartFlowDto(flow.date.toString(), net.plain())
+                    },
                     summary = ChartSummaryDto(
-                        startValue = result.curve.firstOrNull()?.totalCny.plainOrNull(),
-                        endValue = result.curve.lastOrNull()?.totalCny.plainOrNull(),
+                        startValue = start.plainOrNull(),
+                        endValue = end.plainOrNull(),
                         totalPnl = if (pnls.isEmpty()) null else pnls.fold(BigDecimal.ZERO, BigDecimal::add).plain(),
+                        inflowCny = inflow.plain(),
+                        outflowCny = outflow.plain(),
+                        marketPnlCny = if (start != null && end != null) {
+                            end.subtract(start).subtract(inflow).add(outflow).plain()
+                        } else {
+                            null
+                        },
                     ),
                 )
             }
@@ -252,12 +281,57 @@ class WebPortfolioApi(
                     val value = day.categoryValues[id]
                     ChartPointDto(day.date.toString(), value.plainOrNull(), value == null)
                 }
+                val values = result.curve.mapNotNull { it.categoryValues[id] }
+                val start = values.firstOrNull()
+                val end = values.lastOrNull()
+                var inflow = BigDecimal.ZERO
+                var outflow = BigDecimal.ZERO
+                result.dailyFlows.forEach { flow ->
+                    listOfNotNull(
+                        flow.externalByCategory[id]?.takeIf { it.signum() != 0 },
+                        flow.internalByCategory[id]?.takeIf { it.signum() != 0 },
+                    ).forEach { amount ->
+                        if (amount.signum() > 0) {
+                            inflow = inflow.add(amount)
+                        } else {
+                            outflow = outflow.add(amount.abs())
+                        }
+                    }
+                }
                 base.copy(
                     points = points,
+                    adjustedPoints = result.adjustedCurve.map { day ->
+                        val value = day.categoryValues[id]
+                        ChartPointDto(day.date.toString(), value.plainOrNull(), value == null)
+                    },
+                    flows = result.dailyFlows.mapNotNull { flow ->
+                        val net = flow.netFor(id)
+                        val external = flow.externalByCategory[id] ?: BigDecimal.ZERO
+                        val internal = flow.internalByCategory[id] ?: BigDecimal.ZERO
+                        if (external.signum() == 0 && internal.signum() == 0) {
+                            null
+                        } else {
+                            // Same-day opposite entries cancel in the net; fall
+                            // back to the external leg for the marker direction.
+                            val direction = when {
+                                net.signum() != 0 -> net
+                                external.signum() != 0 -> external
+                                else -> internal
+                            }
+                            ChartFlowDto(flow.date.toString(), direction.plain())
+                        }
+                    },
                     category = CategoryRefDto(category.id, category.name, category.color),
                     summary = ChartSummaryDto(
-                        startValue = points.firstOrNull()?.value,
-                        endValue = points.lastOrNull()?.value,
+                        startValue = start.plainOrNull(),
+                        endValue = end.plainOrNull(),
+                        inflowCny = inflow.plain(),
+                        outflowCny = outflow.plain(),
+                        marketPnlCny = if (start != null && end != null) {
+                            end.subtract(start).subtract(inflow).add(outflow).plain()
+                        } else {
+                            null
+                        },
                     ),
                 )
             }
@@ -295,13 +369,55 @@ class WebPortfolioApi(
         )
     }
 
-    override suspend fun expenses(from: LocalDate, to: LocalDate): ExpensesDto {
+    override suspend fun rebalance(from: LocalDate, to: LocalDate): RebalanceStatsDto {
         require(!from.isAfter(to)) { "开始日期不能晚于结束日期" }
         val data = currentData()
         val quoteSnapshot = quotes.ensure(data)
-        val categoryNames = data.settings.categories.associate { it.id to it.name }
-        return ExpensesDto(
-            WebStats.monthlyExpenses(data, categoryNames, quoteSnapshot.fxRates, DateRange(from, to)),
+        val stats = RebalanceStatsCalculator.calculate(
+            data = data,
+            fxRates = quoteSnapshot.fxRates,
+            from = from,
+            to = to,
+        )
+        return RebalanceStatsDto(
+            count = stats.count,
+            dayCount = stats.dayCount,
+            averageIntervalDays = stats.averageIntervalDays,
+            recent30DaysCount = stats.recent30DaysCount,
+            amountCny = stats.amountCny.plain(),
+            feeLossCny = stats.feeLossCny.plain(),
+            months = stats.months.map {
+                RebalanceMonthDto(
+                    month = it.month.toString(),
+                    cashToAsset = it.cashToAsset,
+                    assetToCash = it.assetToCash,
+                    assetToAsset = it.assetToAsset,
+                    count = it.count,
+                    amountCny = it.amountCny.plain(),
+                )
+            },
+            categoryFlows = stats.categoryFlows.map {
+                RebalanceFlowDto(
+                    categoryId = it.categoryId,
+                    name = it.categoryName,
+                    outCny = it.outCny.plain(),
+                    inCny = it.inCny.plain(),
+                    outCount = it.outCount,
+                    inCount = it.inCount,
+                )
+            },
+            topPairs = stats.topPairs.map {
+                RebalancePairDto(
+                    fromName = it.fromName,
+                    toName = it.toName,
+                    count = it.count,
+                    amountCny = it.amountCny.plain(),
+                )
+            },
+            accountMoveCount = stats.accountMoveCount,
+            fxSwapCount = stats.fxSwapCount,
+            cashCategoryCount = stats.cashCategoryCount,
+            incomplete = stats.incomplete,
         )
     }
 

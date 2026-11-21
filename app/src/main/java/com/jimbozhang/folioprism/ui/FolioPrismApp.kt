@@ -42,6 +42,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import com.jimbozhang.folioprism.ui.charts.ChartsScreen
@@ -90,6 +91,7 @@ fun FolioPrismApp(viewModel: AppViewModel = viewModel()) {
             onLoadHistory = viewModel::loadHistory,
             onRefresh = viewModel::refreshQuotes,
             onUpdateData = viewModel::updateData,
+            onFetchQuote = viewModel::fetchQuoteFor,
         )
     }
 }
@@ -105,6 +107,7 @@ private fun MainScaffold(
     onLoadHistory: (java.time.LocalDate, java.time.LocalDate) -> Unit,
     onRefresh: () -> Unit,
     onUpdateData: ((PortfolioData) -> PortfolioData) -> Unit,
+    onFetchQuote: (Instrument) -> Unit,
 ) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -170,6 +173,7 @@ private fun MainScaffold(
                     data = data,
                     quotes = quotes,
                     onUpdateData = onUpdateData,
+                    onRequestQuote = onFetchQuote,
                     contentPadding = PaddingValues(0.dp),
                 )
             }
