@@ -10,7 +10,7 @@ import kotlinx.serialization.Serializable
 data class Meta(
     val createdAt: String = "",
     val updatedAt: String = "",
-    val appVersion: String = "0.3.0",
+    val appVersion: String = "0.4.0",
 )
 
 @Serializable
