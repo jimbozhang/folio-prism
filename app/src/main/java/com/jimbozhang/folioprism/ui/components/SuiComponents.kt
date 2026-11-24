@@ -38,11 +38,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,7 +54,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -61,6 +68,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
+import android.graphics.Rect
+import android.view.ViewTreeObserver
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.ui.theme.FolioDivider
@@ -68,6 +77,7 @@ import com.jimbozhang.folioprism.ui.theme.FolioGold
 import com.jimbozhang.folioprism.ui.theme.FolioGoldSoft
 import com.jimbozhang.folioprism.ui.theme.FolioInk
 import com.jimbozhang.folioprism.ui.theme.FolioMuted
+import kotlinx.coroutines.launch
 
 /**
  * Text-only tab row in the style of Sui's record editor: five visible tabs and
@@ -344,26 +354,89 @@ fun InlineDropdown(
 }
 
 /**
+ * Custom scroll-into-view handler for screens that scroll in a container the
+ * field cannot discover itself (the editor dialog measures its own bottom
+ * padding, for example). The field passes its own layout coordinates; the
+ * handler must scroll so the field is fully visible, and must be idempotent
+ * because it is re-invoked on focus and IME changes.
+ */
+val LocalFieldVisibilityRequester =
+    staticCompositionLocalOf<((LayoutCoordinates) -> Unit)?> { null }
+
+/**
  * Keeps a text field fully visible when the keyboard opens. The default
  * bring-into-view only guarantees the cursor line; the rest of the field can
- * remain clipped below the IME. Re-request the whole field whenever focus or
- * the IME inset changes.
+ * remain clipped below the IME, and some window managers do not satisfy the
+ * request at all, so screens can provide [LocalFieldVisibilityRequester] to
+ * scroll the field into view themselves. The request waits one frame so the
+ * layout produced by the IME change is already placed.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun Modifier.bringIntoViewWhenFocused(): Modifier {
     val requester = remember { BringIntoViewRequester() }
     var focused by remember { mutableStateOf(false) }
+    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val ensureVisible = LocalFieldVisibilityRequester.current
+    val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val imeBottom = WindowInsets.ime.getBottom(density)
+    val request: () -> Unit = {
+        val coords = coordinates
+        if (ensureVisible != null && coords != null) {
+            ensureVisible(coords)
+        } else {
+            scope.launch { requester.bringIntoView() }
+        }
+    }
     LaunchedEffect(focused, imeBottom) {
         if (focused) {
-            requester.bringIntoView()
+            // Wait one frame so the layout produced by this IME change has
+            // been placed and the field's coordinates are current; the IME
+            // animation re-triggers this effect, so the last step runs with
+            // the settled layout.
+            withFrameNanos { }
+            request()
         }
     }
     return this
         .bringIntoViewRequester(requester)
+        .onGloballyPositioned { coordinates = it }
         .onFocusChanged { focused = it.isFocused }
+}
+
+/**
+ * Bottom overflow in px of the current window: how far the window's bottom
+ * edge lies past the visible display frame, which excludes the navigation
+ * bar and the keyboard. Some window managers (MIUI, for example) place a
+ * full-height dialog window below the status bar while keeping the full
+ * display height, so the window's bottom can sit past the visible bottom
+ * without any inset being reported. Padding dialog content by this amount
+ * keeps every scrollable row clear of the navigation bar on any device. When
+ * the window is told not to pan or resize around the IME, the visible frame
+ * ignores the keyboard too, so the caller adds WindowInsets.ime separately.
+ */
+@Composable
+fun rememberWindowBottomOverflowPx(): Int {
+    val view = LocalView.current
+    var overflowPx by remember(view) { mutableStateOf(0) }
+    DisposableEffect(view) {
+        val listener = ViewTreeObserver.OnGlobalLayoutListener {
+            val visible = Rect()
+            @Suppress("DEPRECATION")
+            view.getWindowVisibleDisplayFrame(visible)
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+            val px = (location[1] + view.height - visible.bottom).coerceAtLeast(0)
+            if (px != overflowPx) {
+                overflowPx = px
+            }
+        }
+        view.viewTreeObserver.addOnGlobalLayoutListener(listener)
+        listener.onGlobalLayout()
+        onDispose { view.viewTreeObserver.removeOnGlobalLayoutListener(listener) }
+    }
+    return overflowPx
 }
 
 /**

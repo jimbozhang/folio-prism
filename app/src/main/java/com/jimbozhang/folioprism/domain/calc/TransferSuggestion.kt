@@ -264,6 +264,36 @@ object TransferSuggestion {
         }
     }
 
+    /**
+     * Precedence rule for suggested prices: a suggestion fills a blank field
+     * and keeps updating while the field still holds the previous
+     * suggestion; once the user has typed anything else, their value wins.
+     * Selecting a different instrument always takes its own quote.
+     */
+    fun applyPriceSuggestion(
+        current: String,
+        lastSuggested: String?,
+        instrumentChanged: Boolean,
+        suggested: String?,
+    ): PriceSuggestion {
+        return when {
+            instrumentChanged -> PriceSuggestion(suggested ?: "", suggested)
+
+            suggested == null -> {
+                if (current.isBlank() || current == lastSuggested) {
+                    PriceSuggestion("", null)
+                } else {
+                    PriceSuggestion(current, lastSuggested)
+                }
+            }
+
+            current.isBlank() || current == lastSuggested ->
+                PriceSuggestion(suggested, suggested)
+
+            else -> PriceSuggestion(current, lastSuggested)
+        }
+    }
+
     private fun fxRate(currency: String, quotes: QuoteSnapshot): BigDecimal? =
         when (currency.uppercase()) {
             "CNY", "CNH" -> BigDecimal.ONE
@@ -272,6 +302,11 @@ object TransferSuggestion {
 }
 
 data class QuantitySuggestion(
+    val value: String,
+    val lastSuggested: String?,
+)
+
+data class PriceSuggestion(
     val value: String,
     val lastSuggested: String?,
 )

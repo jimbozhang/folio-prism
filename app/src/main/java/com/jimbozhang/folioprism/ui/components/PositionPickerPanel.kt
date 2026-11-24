@@ -34,10 +34,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import android.graphics.Rect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -114,203 +119,230 @@ fun PositionPickerPanel(
         }.thenBy { it.code },
     )
 
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-        color = Color.White,
-        shadowElevation = 24.dp,
-    ) {
-        Column(
+    Box(modifier = modifier) {
+        // This sheet is hosted in a dialog window whose bottom edge can extend
+        // past the physical screen bottom by a device-dependent amount: some
+        // window managers place the full-height window below the status bar
+        // instead of letting it cover the screen from the top. Measure the
+        // off-screen part from the host view's visible display frame and pad
+        // the sheet up by it so its bottom edge lands at the visible bottom.
+        val density = LocalDensity.current
+        val hostView = LocalView.current
+        // Physical display height in px; the sheet bottom should land there so
+        // the card reaches the screen bottom like a regular bottom sheet.
+        val displayHeightPx =
+            (LocalConfiguration.current.screenHeightDp * density.density).toInt()
+        var overscanPx by remember { mutableStateOf(0) }
+
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(bottom = 12.dp),
+                .padding(bottom = with(density) { overscanPx.toDp() })
+                .onGloballyPositioned {
+                    val visible = Rect()
+                    @Suppress("DEPRECATION")
+                    hostView.getWindowVisibleDisplayFrame(visible)
+                    val px = (visible.top + hostView.height - displayHeightPx).coerceAtLeast(0)
+                    if (px != overscanPx) {
+                        overscanPx = px
+                    }
+                },
+            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+            color = Color.White,
+            shadowElevation = 24.dp,
         ) {
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp),
-                contentAlignment = Alignment.Center,
+                    .navigationBarsPadding()
+                    .padding(bottom = 12.dp),
             ) {
                 Box(
                     modifier = Modifier
-                        .width(36.dp)
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(FolioDivider),
-                )
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = FolioInk,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(onClick = onDismiss) {
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = "关闭",
-                        tint = FolioMuted,
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(36.dp)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(FolioDivider),
                     )
                 }
-            }
-
-            if (institutions.isEmpty()) {
-                PickerHint("暂无机构")
-                return@Column
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(400.dp),
-            ) {
-                LazyColumn(
+                Row(
                     modifier = Modifier
-                        .width(132.dp)
-                        .fillMaxHeight()
-                        .background(Color(0xFFF7F8F7)),
+                        .fillMaxWidth()
+                        .padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    items(visibleInstitutions, key = { it.id }) { institution ->
-                        InstitutionRow(
-                            name = institution.name,
-                            selected = institution.id == institutionId,
-                            onClick = { institutionId = institution.id },
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = FolioInk,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = "关闭",
+                            tint = FolioMuted,
                         )
                     }
                 }
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .fillMaxHeight()
-                        .background(FolioDivider),
-                )
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                ) {
-                    if (heldOnlyFilter || eligibleInstrumentIds != null) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 14.dp, end = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = when {
-                                    eligibleInstrumentIds != null && showAll -> "显示全部资产"
-                                    eligibleInstrumentIds != null -> "仅显示可用资产"
-                                    showAll -> "显示全部标的"
-                                    else -> "仅显示持仓"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = FolioMuted,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(onClick = { showAll = !showAll }) {
-                                Text(
-                                    text = if (showAll) {
-                                        if (eligibleInstrumentIds != null) {
-                                            "仅显示可用"
-                                        } else {
-                                            "仅显示持仓"
-                                        }
-                                    } else {
-                                        "显示全部"
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = FolioGold,
-                                )
-                            }
-                        }
-                        HorizontalDivider(color = FolioDivider)
-                    }
 
-                    if (visibleInstitutions.isEmpty()) {
-                        PickerHint("没有包含可用资产的机构，可显示全部资产")
-                    } else if (sortedInstruments.isEmpty()) {
-                        PickerHint(
-                            when {
-                                eligibleInstrumentIds != null && !showAll ->
-                                    "当前机构暂无可用资产"
-                                heldOnlyFilter && !showAll ->
-                                    "当前机构暂无持仓，可显示全部标的"
-                                else -> "暂无标的"
-                            },
-                        )
-                    } else {
-                        LazyColumn(
-                            state = instrumentListState,
-                            modifier = Modifier.fillMaxSize(),
-                        ) {
-                            items(sortedInstruments, key = { it.id }) { instrument ->
-                                val key = PositionKey(institutionId ?: "", instrument.id)
-                                val selected = institutionId == selectedInstitutionId &&
-                                    instrument.id == selectedInstrumentId
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable(enabled = institutionId != null) {
-                                            val institution = institutionId ?: return@clickable
-                                            onSelect(institution, instrument.id)
-                                            onDismiss()
-                                        }
-                                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "${instrument.code} ${instrument.name}",
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = FolioInk,
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = buildString {
-                                                append(
-                                                    categoryNames[instrument.categoryId]
-                                                        ?: instrument.categoryId,
-                                                )
-                                                append(" · ")
-                                                append(instrument.currency)
-                                                append(" · ")
-                                                append(instrument.unit)
-                                            },
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = FolioMuted,
-                                        )
-                                        val quantity = quantities[key]
-                                        if (quantity != null && quantity.signum() != 0) {
+                if (institutions.isEmpty()) {
+                    PickerHint("暂无机构")
+                    return@Column
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(360.dp),
+                ) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .width(132.dp)
+                            .fillMaxHeight()
+                            .background(Color(0xFFF7F8F7)),
+                    ) {
+                        items(visibleInstitutions, key = { it.id }) { institution ->
+                            InstitutionRow(
+                                name = institution.name,
+                                selected = institution.id == institutionId,
+                                onClick = { institutionId = institution.id },
+                            )
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .fillMaxHeight()
+                            .background(FolioDivider),
+                    )
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                    ) {
+                        if (heldOnlyFilter || eligibleInstrumentIds != null) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 14.dp, end = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = when {
+                                        eligibleInstrumentIds != null && showAll -> "显示全部资产"
+                                        eligibleInstrumentIds != null -> "仅显示可用资产"
+                                        showAll -> "显示全部标的"
+                                        else -> "仅显示持仓"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FolioMuted,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(onClick = { showAll = !showAll }) {
+                                    Text(
+                                        text = if (showAll) {
+                                            if (eligibleInstrumentIds != null) {
+                                                "仅显示可用"
+                                            } else {
+                                                "仅显示持仓"
+                                            }
+                                        } else {
+                                            "显示全部"
+                                        },
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = FolioGold,
+                                    )
+                                }
+                            }
+                            HorizontalDivider(color = FolioDivider)
+                        }
+
+                        if (visibleInstitutions.isEmpty()) {
+                            PickerHint("没有包含可用资产的机构，可显示全部资产")
+                        } else if (sortedInstruments.isEmpty()) {
+                            PickerHint(
+                                when {
+                                    eligibleInstrumentIds != null && !showAll ->
+                                        "当前机构暂无可用资产"
+                                    heldOnlyFilter && !showAll ->
+                                        "当前机构暂无持仓，可显示全部标的"
+                                    else -> "暂无标的"
+                                },
+                            )
+                        } else {
+                            LazyColumn(
+                                state = instrumentListState,
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                items(sortedInstruments, key = { it.id }) { instrument ->
+                                    val key = PositionKey(institutionId ?: "", instrument.id)
+                                    val selected = institutionId == selectedInstitutionId &&
+                                        instrument.id == selectedInstrumentId
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable(enabled = institutionId != null) {
+                                                val institution = institutionId ?: return@clickable
+                                                onSelect(institution, instrument.id)
+                                                onDismiss()
+                                            }
+                                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "${instrument.code} ${instrument.name}",
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = FolioInk,
+                                            )
                                             Spacer(modifier = Modifier.height(2.dp))
                                             Text(
-                                                text = "持有 " + formatQuantity(quantity) + " " +
-                                                    instrument.unit +
-                                                    (values[key]?.let { " · 约 " + formatCny(it) } ?: ""),
+                                                text = buildString {
+                                                    append(
+                                                        categoryNames[instrument.categoryId]
+                                                            ?: instrument.categoryId,
+                                                    )
+                                                    append(" · ")
+                                                    append(instrument.currency)
+                                                    append(" · ")
+                                                    append(instrument.unit)
+                                                },
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = FolioMuted,
                                             )
+                                            val quantity = quantities[key]
+                                            if (quantity != null && quantity.signum() != 0) {
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = "持有 " + formatQuantity(quantity) + " " +
+                                                        instrument.unit +
+                                                        (values[key]?.let { " · 约 " + formatCny(it) } ?: ""),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = FolioMuted,
+                                                )
+                                            }
+                                        }
+                                        if (selected) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.Check,
+                                                contentDescription = null,
+                                                tint = FolioGold,
+                                                modifier = Modifier.size(20.dp),
+                                            )
                                         }
                                     }
-                                    if (selected) {
-                                        Icon(
-                                            imageVector = Icons.Outlined.Check,
-                                            contentDescription = null,
-                                            tint = FolioGold,
-                                            modifier = Modifier.size(20.dp),
-                                        )
-                                    }
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(start = 14.dp),
+                                        color = FolioDivider,
+                                    )
                                 }
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(start = 14.dp),
-                                    color = FolioDivider,
-                                )
                             }
                         }
                     }
@@ -331,7 +363,7 @@ private fun InstitutionRow(
             .fillMaxWidth()
             .background(if (selected) FolioGoldSoft else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 14.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(

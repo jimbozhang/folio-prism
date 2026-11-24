@@ -217,6 +217,49 @@ class TransferSuggestionTest {
     }
 
     @Test
+    fun priceSuggestionPrefersUserInput() {
+        // A blank field takes the suggestion.
+        val blank = TransferSuggestion.applyPriceSuggestion("", null, false, "2")
+        assertEquals("2", blank.value)
+        assertEquals("2", blank.lastSuggested)
+
+        // A field still holding the previous suggestion follows new quotes.
+        val followsQuote = TransferSuggestion.applyPriceSuggestion("2", "2", false, "3.5")
+        assertEquals("3.5", followsQuote.value)
+        assertEquals("3.5", followsQuote.lastSuggested)
+
+        // A user-typed value wins and the last suggestion is remembered.
+        val userWins = TransferSuggestion.applyPriceSuggestion("999", "2", false, "3.5")
+        assertEquals("999", userWins.value)
+        assertEquals("2", userWins.lastSuggested)
+
+        // A field the user cleared is filled by the suggestion again.
+        val cleared = TransferSuggestion.applyPriceSuggestion("", "2", false, "3.5")
+        assertEquals("3.5", cleared.value)
+        assertEquals("3.5", cleared.lastSuggested)
+
+        // A different instrument always takes its own quote.
+        val switched = TransferSuggestion.applyPriceSuggestion("999", "2", true, "4")
+        assertEquals("4", switched.value)
+        assertEquals("4", switched.lastSuggested)
+
+        // Without a quote, a stale derived value is dropped...
+        val staleDropped = TransferSuggestion.applyPriceSuggestion("2", "2", false, null)
+        assertEquals("", staleDropped.value)
+        assertNull(staleDropped.lastSuggested)
+
+        // ...but user input survives.
+        val userKept = TransferSuggestion.applyPriceSuggestion("999", "2", false, null)
+        assertEquals("999", userKept.value)
+        assertEquals("2", userKept.lastSuggested)
+
+        // Switching to an instrument without a quote clears the field.
+        val switchedNoQuote = TransferSuggestion.applyPriceSuggestion("999", "2", true, null)
+        assertEquals("", switchedNoQuote.value)
+        assertNull(switchedNoQuote.lastSuggested)
+    }
+
+    @Test
     fun priceSuggestionUsesQuoteThenManual() {
         assertEquals("2", TransferSuggestion.suggestPrice(quotes, fund))
 
