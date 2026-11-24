@@ -10,8 +10,14 @@ import kotlinx.serialization.Serializable
 sealed class Event {
     abstract val id: String
     abstract val date: String
+
+    /**
+     * Legacy: when the row was recorded, not when the event happened. The
+     * ledger only cares about [date], so it is no longer written; the
+     * property stays so files written by older versions still decode, and it
+     * disappears from the file on the next save.
+     */
     abstract val createdAt: String
-    abstract val updatedAt: String?
     abstract val note: String
 }
 
@@ -25,7 +31,6 @@ data class TransferEvent(
     override val date: String,
     override val id: String = UUID.randomUUID().toString(),
     override val createdAt: String = "",
-    override val updatedAt: String? = null,
     override val note: String = "",
     @Serializable(with = BigDecimalAsStringSerializer::class) val fromPrice: BigDecimal? = null,
     @Serializable(with = BigDecimalAsStringSerializer::class) val toPrice: BigDecimal? = null,
@@ -57,7 +62,6 @@ data class IncomeEvent(
     override val date: String,
     override val id: String = UUID.randomUUID().toString(),
     override val createdAt: String = "",
-    override val updatedAt: String? = null,
     override val note: String = "",
     val source: PositionRef? = null,
     val immediateExternalWithdrawal: Boolean = false,
@@ -74,7 +78,6 @@ data class ExpenseEvent(
     override val date: String,
     override val id: String = UUID.randomUUID().toString(),
     override val createdAt: String = "",
-    override val updatedAt: String? = null,
     override val note: String = "",
     val position: PositionRef? = null,
     val linkedTransferId: String? = null,
@@ -103,7 +106,6 @@ data class ExternalEvent(
     override val date: String,
     override val id: String = UUID.randomUUID().toString(),
     override val createdAt: String = "",
-    override val updatedAt: String? = null,
     override val note: String = "",
     val counterpartyLabel: String? = null,
 ) : Event()
@@ -115,7 +117,6 @@ data class OpeningEvent(
     override val date: String,
     override val id: String = UUID.randomUUID().toString(),
     override val createdAt: String = "",
-    override val updatedAt: String? = null,
     override val note: String = "",
     @Serializable(with = BigDecimalAsStringSerializer::class) val quantity: BigDecimal? = null,
     @Serializable(with = BigDecimalAsStringSerializer::class) val amount: BigDecimal? = null,
@@ -130,9 +131,21 @@ data class AdjustmentEvent(
     override val date: String,
     override val id: String = UUID.randomUUID().toString(),
     override val createdAt: String = "",
-    override val updatedAt: String? = null,
     override val note: String = "",
     @Serializable(with = BigDecimalAsStringSerializer::class) val deltaQuantity: BigDecimal? = null,
     @Serializable(with = BigDecimalAsStringSerializer::class) val deltaAmount: BigDecimal? = null,
     @Serializable(with = BigDecimalAsStringSerializer::class) val price: BigDecimal? = null,
 ) : Event()
+
+/**
+ * Clears the legacy [Event.createdAt] so the whole file, not only edited
+ * events, loses the field on the next save.
+ */
+fun Event.withoutLegacyCreatedAt(): Event = when (this) {
+    is TransferEvent -> copy(createdAt = "")
+    is IncomeEvent -> copy(createdAt = "")
+    is ExpenseEvent -> copy(createdAt = "")
+    is ExternalEvent -> copy(createdAt = "")
+    is OpeningEvent -> copy(createdAt = "")
+    is AdjustmentEvent -> copy(createdAt = "")
+}

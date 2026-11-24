@@ -281,7 +281,7 @@ const LedgerView = (() => {
       const ta = Fmt.timestamp(a.date);
       const tb = Fmt.timestamp(b.date);
       if (tb !== ta) return tb - ta;
-      return Fmt.timestamp(b.createdAt) - Fmt.timestamp(a.createdAt);
+      return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
     });
     if (events.length === 0) {
       container.appendChild(el('div', 'empty', '没有符合条件的流水'));
@@ -341,7 +341,7 @@ const LedgerView = (() => {
       const ta = Fmt.timestamp(a.date);
       const tb = Fmt.timestamp(b.date);
       if (ta !== tb) return ta - tb;
-      return Fmt.timestamp(a.createdAt) - Fmt.timestamp(b.createdAt);
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
     let running = '0';
     ordered.forEach(function (event) {

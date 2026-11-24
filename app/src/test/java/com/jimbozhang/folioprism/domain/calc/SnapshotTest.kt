@@ -80,6 +80,22 @@ class SnapshotTest {
         )
     }
 
+    /** Without any holdings every share is 0%, never a division by zero. */
+    @Test
+    fun zeroTotalTreatsEveryShareAsZero() {
+        val snapshot = SnapshotCalculator.build(data(), emptyMap(), provider, date)
+
+        assertDecimal("0", snapshot.totalValueCny)
+        assertDecimal("0", snapshot.dividendShare)
+        assertDecimal("0", snapshot.portfolioShare)
+        snapshot.categories.forEach { category ->
+            assertDecimal("0", category.valueCny)
+            assertDecimal("0", category.share)
+            assertDecimal("0", category.visualShare)
+            assertFalse(category.inRange)
+        }
+    }
+
     @Test
     fun totalsUseDualDenominator() {
         val snapshot = SnapshotCalculator.build(data(), positions(), provider, date)

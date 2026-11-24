@@ -12,6 +12,7 @@ import com.jimbozhang.folioprism.domain.model.QuoteMode
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.model.positionRefs
 import java.math.BigDecimal
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -204,8 +205,14 @@ class HistoricalPriceService(
 
     /**
      * A cached series is sufficient when it has a close within 30 days before
-     * the requested start (the provider's look-back window) and a close within
-     * 15 days of the requested end (covers weekends and long holidays).
+     * the requested start (the provider's look-back window) and a close near
+     * the requested end: on or after the last weekday up to [to] minus three
+     * days, which covers weekends and short holidays. A staler series must be
+     * refetched: otherwise the history silently values the range start with
+     * an old close (up to the provider's look-back) while the end uses live
+     * prices, so days outside the selected range leak into its profit or
+     * loss. Longer holidays are covered by the exhaustion record instead of
+     * by a lax freshness bound.
      */
     private fun isCovered(
         series: CachedSeries?,
@@ -217,8 +224,17 @@ class HistoricalPriceService(
             .mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }
         if (dates.isEmpty()) return false
         val hasStart = dates.any { !it.isBefore(from.minusDays(30)) && !it.isAfter(from) }
-        val hasEnd = dates.any { !it.isBefore(to.minusDays(15)) }
+        val hasEnd = dates.any { !it.isBefore(lastWeekday(to).minusDays(3)) }
         return hasStart && hasEnd
+    }
+
+    /** The last weekday on or before [date]: exchanges are closed on weekends. */
+    private fun lastWeekday(date: LocalDate): LocalDate {
+        var day = date
+        while (day.dayOfWeek == DayOfWeek.SATURDAY || day.dayOfWeek == DayOfWeek.SUNDAY) {
+            day = day.minusDays(1)
+        }
+        return day
     }
 
     /**

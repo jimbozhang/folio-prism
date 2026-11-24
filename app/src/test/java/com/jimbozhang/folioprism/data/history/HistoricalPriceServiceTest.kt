@@ -11,7 +11,10 @@ import com.jimbozhang.folioprism.domain.opening
 import com.jimbozhang.folioprism.domain.portfolio
 import com.jimbozhang.folioprism.domain.quotedInstrument
 import com.jimbozhang.folioprism.domain.ref
+import com.jimbozhang.folioprism.domain.calc.HistoricalPriceProvider
+import com.jimbozhang.folioprism.domain.history.CachedSeries
 import com.jimbozhang.folioprism.domain.history.DateRange
+import com.jimbozhang.folioprism.domain.history.PriceCacheData
 import com.jimbozhang.folioprism.domain.model.CategoryIds
 import com.jimbozhang.folioprism.domain.model.QuoteConfig
 import com.jimbozhang.folioprism.domain.model.QuoteMode
@@ -19,6 +22,7 @@ import com.jimbozhang.folioprism.domain.money.bd
 import java.io.File
 import java.nio.file.Files
 import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -198,6 +202,116 @@ class HistoricalPriceServiceTest {
 
         assertTrue(third.logs.any { it.contains("history cached: 513500") })
         assertEquals(afterShifted, fetcher.requestCount)
+
+        dir.deleteRecursively()
+        Unit
+    }
+
+    /**
+     * A cache whose newest close is days old must be refetched for a range
+     * ending today: reusing it would silently value the range start with an
+     * old close while the end uses live prices, so days outside the selected
+     * range leak into its profit or loss.
+     */
+    @Test
+    fun staleCacheIsRefetchedSoTheRangeStartUsesTheRightClose() = runBlocking {
+        val data = portfolio(
+            instruments = listOf(quotedInstrument(FUND, CategoryIds.GROWTH, code = "008163")),
+            events = listOf(
+                opening(ref(INST_A, FUND), quantity = "10", date = "2025-06-01T00:00:00+08:00"),
+            ),
+        )
+        val chinaZone = ZoneId.of("Asia/Shanghai")
+        fun nav(date: String, value: String): String {
+            val millis = LocalDate.parse(date).atStartOfDay(chinaZone).toInstant().toEpochMilli()
+            return """{"x":$millis,"y":$value}"""
+        }
+        val fetcher = FakeFetcher { url ->
+            when {
+                url.contains("pingzhongdata/008163") ->
+                    "var Data_netWorthTrend = [" +
+                        listOf(
+                            nav("2026-11-19", "1.13"),
+                            nav("2026-11-20", "1.14"),
+                            nav("2026-11-23", "1.15"),
+                        ).joinToString(",") + "];"
+
+                else -> null
+            }
+        }
+        val dir = Files.createTempDirectory("history-cache-stale").toFile()
+        val repo = PriceCacheRepository(File(dir, "price-cache.json"))
+        // The last chart load happened days ago: the newest close is 11-18.
+        repo.save(
+            PriceCacheData(
+                quotes = mapOf(
+                    FUND to CachedSeries(
+                        auto = linkedMapOf(
+                            "2026-11-16" to "1.10",
+                            "2026-11-17" to "1.11",
+                            "2026-11-18" to "1.12",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val service = HistoricalPriceService(fetcher, repo, now = { "now" })
+
+        val result = service.fetchAndCache(
+            data = data,
+            from = LocalDate.of(2026, 11, 22),
+            to = LocalDate.of(2026, 11, 24),
+        )
+
+        assertTrue(result.logs.any { it.contains("history ok: 008163") })
+        assertEquals("1.15", result.cache.quotes[FUND]?.auto?.get("2026-11-23"))
+        // 11-22 falls back to the previous weekday close (11-20), not to the
+        // stale 11-18 close the cache held before the refresh.
+        val provider = HistoricalPriceProvider(result.cache)
+        assertDecimal("1.14", provider.price(FUND, LocalDate.of(2026, 11, 22)))
+
+        dir.deleteRecursively()
+        Unit
+    }
+
+    @Test
+    fun weekendRangeEndAcceptsFridayCloseWithoutRefetch() = runBlocking {
+        val data = portfolio(
+            instruments = listOf(quotedInstrument(FUND, CategoryIds.GROWTH, code = "008163")),
+            events = listOf(
+                opening(ref(INST_A, FUND), quantity = "10", date = "2025-06-01T00:00:00+08:00"),
+            ),
+        )
+        val fetcher = FakeFetcher { _ -> null }
+        val dir = Files.createTempDirectory("history-cache-weekend").toFile()
+        val repo = PriceCacheRepository(File(dir, "price-cache.json"))
+        repo.save(
+            PriceCacheData(
+                quotes = mapOf(
+                    FUND to CachedSeries(
+                        auto = linkedMapOf(
+                            "2026-11-12" to "1.10",
+                            "2026-11-13" to "1.11",
+                            "2026-11-16" to "1.12",
+                            "2026-11-17" to "1.12",
+                            "2026-11-18" to "1.13",
+                            "2026-11-19" to "1.13",
+                            "2026-11-20" to "1.14",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val service = HistoricalPriceService(fetcher, repo, now = { "now" })
+
+        val result = service.fetchAndCache(
+            data = data,
+            from = LocalDate.of(2026, 11, 15),
+            to = LocalDate.of(2026, 11, 22),
+        )
+
+        assertTrue(result.logs.any { it.contains("history cached: 008163") })
+        assertEquals(0, fetcher.requestCount)
 
         dir.deleteRecursively()
         Unit

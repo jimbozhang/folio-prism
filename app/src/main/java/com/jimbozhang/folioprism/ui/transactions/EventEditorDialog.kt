@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -32,14 +35,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -72,15 +81,18 @@ import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.money.toMoneyAmount
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
+import com.jimbozhang.folioprism.ui.components.LocalFieldVisibilityRequester
 import com.jimbozhang.folioprism.ui.components.PositionPickerPanel
 import com.jimbozhang.folioprism.ui.components.SingleDatePickerDialog
 import com.jimbozhang.folioprism.ui.components.SuiTabRow
 import com.jimbozhang.folioprism.ui.components.TimeOfDayPickerDialog
+import com.jimbozhang.folioprism.ui.components.rememberWindowBottomOverflowPx
 import com.jimbozhang.folioprism.ui.theme.FolioCoral
 import com.jimbozhang.folioprism.ui.theme.FolioDivider
 import com.jimbozhang.folioprism.ui.theme.FolioGold
 import com.jimbozhang.folioprism.ui.theme.FolioInk
 import com.jimbozhang.folioprism.ui.theme.FolioMuted
+import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
@@ -135,6 +147,10 @@ internal class EventForm(
     var toPrice by mutableStateOf("")
     /** Last value this form suggested for [toQuantity]; user input wins. */
     var lastSuggestedToQuantity by mutableStateOf<String?>(null)
+    /** Last derived value written to [fromPrice]; user input wins. */
+    var lastSuggestedFromPrice by mutableStateOf<String?>(null)
+    /** Last derived value written to [toPrice]; user input wins. */
+    var lastSuggestedToPrice by mutableStateOf<String?>(null)
     var feeLoss by mutableStateOf("")
     var feeFromCash by mutableStateOf(false)
     var feeInstitutionId by mutableStateOf<String?>(null)
@@ -261,25 +277,31 @@ fun EventEditorDialog(
     onSave: (List<Event>) -> Unit,
 ) {
     val form = remember(initial?.id) { EventForm(initial, data) }
-    val dialogView = LocalView.current
-    // A quote requested for a newly added instrument arrives asynchronously;
-    // fill the price fields once it is available, never overwriting typing.
+    // Quotes arrive (or update) asynchronously; keep the price fields in sync
+    // with the latest quote while the user has not typed their own value.
     LaunchedEffect(quotes) {
         val from = form.fromInstrumentId?.let(data::instrument)
-        if (from?.kind == InstrumentKind.QUOTED && form.fromPrice.isBlank()) {
-            TransferSuggestion.suggestPrice(quotes, from)?.let { form.fromPrice = it }
+        if (from?.kind == InstrumentKind.QUOTED) {
+            val applied = TransferSuggestion.applyPriceSuggestion(
+                current = form.fromPrice,
+                lastSuggested = form.lastSuggestedFromPrice,
+                instrumentChanged = false,
+                suggested = TransferSuggestion.suggestPrice(quotes, from),
+            )
+            form.fromPrice = applied.value
+            form.lastSuggestedFromPrice = applied.lastSuggested
         }
         val to = form.toInstrumentId?.let(data::instrument)
-        if (to?.kind == InstrumentKind.QUOTED && form.toPrice.isBlank()) {
-            TransferSuggestion.suggestPrice(quotes, to)?.let { form.toPrice = it }
+        if (to?.kind == InstrumentKind.QUOTED) {
+            val applied = TransferSuggestion.applyPriceSuggestion(
+                current = form.toPrice,
+                lastSuggested = form.lastSuggestedToPrice,
+                instrumentChanged = false,
+                suggested = TransferSuggestion.suggestPrice(quotes, to),
+            )
+            form.toPrice = applied.value
+            form.lastSuggestedToPrice = applied.lastSuggested
         }
-    }
-    // The editor is a full-screen Dialog window; make sure it resizes for the
-    // IME so focused fields and the save bar are never hidden by the keyboard.
-    LaunchedEffect(dialogView) {
-        val window = (dialogView.parent as? DialogWindowProvider)?.window
-            ?: return@LaunchedEffect
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
     }
     var error by remember(initial?.id) { mutableStateOf<String?>(null) }
     var picker by remember { mutableStateOf<PickerTarget?>(null) }
@@ -325,13 +347,63 @@ fun EventEditorDialog(
             decorFitsSystemWindows = false,
         ),
     ) {
+        // This view lives in the dialog window (LocalView outside the Dialog
+        // belongs to the main window and cannot reach it). Do not let the
+        // window manager pan the window around the keyboard: a pan pushes the
+        // top bar off screen, and the content below already scrolls the
+        // focused field into view itself.
+        val dialogView = LocalView.current
+        LaunchedEffect(dialogView) {
+            val window = (dialogView.parent as? DialogWindowProvider)?.window
+                ?: return@LaunchedEffect
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+        }
+        // The window may extend past the visible area (see
+        // rememberWindowBottomOverflowPx), and the visible frame no longer
+        // excludes the keyboard once the window manager is told not to pan or
+        // resize around it, so the bottom padding is the measured window
+        // overflow plus the IME inset; safeDrawing only contributes its top
+        // and horizontal parts.
+        val windowOverflowPx = rememberWindowBottomOverflowPx()
+        val density = LocalDensity.current
+        val imeBottomPx = WindowInsets.ime.getBottom(density)
+        val bottomOverflowPx = windowOverflowPx + imeBottomPx
         Surface(modifier = Modifier.fillMaxSize(), color = Color.White) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(
+                            WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
+                        ),
+                    )
+                    .padding(bottom = with(density) { bottomOverflowPx.toDp() })
                     .background(Color.White),
             ) {
+                val formScroll = rememberScrollState()
+                // Bottom edge of the scrollable form viewport in window
+                // coordinates; a focused field asks to be scrolled above it
+                // when the keyboard covers part of the window.
+                var viewportBottomPx by remember { mutableStateOf(0f) }
+                val scope = rememberCoroutineScope()
+                val fieldMarginPx = with(density) { 16.dp.toPx() }
+                val ensureFieldVisible = remember(scope, fieldMarginPx) {
+                    { coordinates: LayoutCoordinates ->
+                        val fieldBottom =
+                            coordinates.positionInWindow().y + coordinates.size.height
+                        val overflow = fieldBottom + fieldMarginPx - viewportBottomPx
+                        if (overflow > 0f) {
+                            scope.launch {
+                                val target = (formScroll.value + overflow)
+                                    .coerceAtMost(formScroll.maxValue.toFloat())
+                                formScroll.scrollTo(target.toInt())
+                            }
+                        }
+                    }
+                }
+                CompositionLocalProvider(
+                    LocalFieldVisibilityRequester provides ensureFieldVisible,
+                ) {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     containerColor = Color.White,
@@ -370,7 +442,11 @@ fun EventEditorDialog(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(innerPadding)
-                            .verticalScroll(rememberScrollState()),
+                            .onGloballyPositioned {
+                                viewportBottomPx =
+                                    it.positionInWindow().y + it.size.height
+                            }
+                            .verticalScroll(formScroll),
                     ) {
                         when (form.type) {
                             "transfer" -> TransferSection(
@@ -392,6 +468,7 @@ fun EventEditorDialog(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                     }
+                }
                 }
 
                 val target = picker
@@ -557,16 +634,36 @@ private fun pickerConfig(
             instrumentId = form.fromInstrumentId,
             heldFilter = true,
         ) { institutionId, instrumentId ->
+            val instrument = data.instrument(instrumentId)
+            val instrumentChanged = instrumentId != form.fromInstrumentId
             form.fromInstitutionId = institutionId
             form.fromInstrumentId = instrumentId
-            val instrument = data.instrument(instrumentId)
-            // A new instrument always refills the price with its own quote;
-            // whatever the user types afterwards wins.
-            val suggested = TransferSuggestion.suggestPrice(quotes, instrument)
-            form.fromPrice = if (instrument?.kind == InstrumentKind.QUOTED) suggested ?: "" else ""
-            if (instrument?.kind == InstrumentKind.QUOTED && suggested == null) {
-                // Just added and never quoted: fetch its price on demand.
-                onRequestQuote(instrument)
+            when {
+                instrument?.kind != InstrumentKind.QUOTED -> {
+                    form.fromPrice = ""
+                    form.lastSuggestedFromPrice = null
+                }
+
+                else -> {
+                    val suggested = TransferSuggestion.suggestPrice(quotes, instrument)
+                    // A different instrument always takes its own quote; for
+                    // the same instrument, the derived price only replaces a
+                    // blank field or one that still holds our previous
+                    // suggestion, so a manually typed price survives (e.g.
+                    // when only the institution changes).
+                    val applied = TransferSuggestion.applyPriceSuggestion(
+                        current = form.fromPrice,
+                        lastSuggested = form.lastSuggestedFromPrice,
+                        instrumentChanged = instrumentChanged,
+                        suggested = suggested,
+                    )
+                    form.fromPrice = applied.value
+                    form.lastSuggestedFromPrice = applied.lastSuggested
+                    if (suggested == null) {
+                        // Just added and never quoted: fetch its price on demand.
+                        onRequestQuote(instrument)
+                    }
+                }
             }
         }
 
@@ -576,13 +673,33 @@ private fun pickerConfig(
             institutionId = form.toInstitutionId,
             instrumentId = form.toInstrumentId,
         ) { institutionId, instrumentId ->
+            val instrument = data.instrument(instrumentId)
+            val instrumentChanged = instrumentId != form.toInstrumentId
             form.toInstitutionId = institutionId
             form.toInstrumentId = instrumentId
-            val instrument = data.instrument(instrumentId)
-            val suggested = TransferSuggestion.suggestPrice(quotes, instrument)
-            form.toPrice = if (instrument?.kind == InstrumentKind.QUOTED) suggested ?: "" else ""
-            if (instrument?.kind == InstrumentKind.QUOTED && suggested == null) {
-                onRequestQuote(instrument)
+            when {
+                instrument?.kind != InstrumentKind.QUOTED -> {
+                    form.toPrice = ""
+                    form.lastSuggestedToPrice = null
+                }
+
+                else -> {
+                    val suggested = TransferSuggestion.suggestPrice(quotes, instrument)
+                    // See TRANSFER_FROM: only a different instrument (or a
+                    // blank field, or our own previous suggestion) takes the
+                    // derived price; user input wins.
+                    val applied = TransferSuggestion.applyPriceSuggestion(
+                        current = form.toPrice,
+                        lastSuggested = form.lastSuggestedToPrice,
+                        instrumentChanged = instrumentChanged,
+                        suggested = suggested,
+                    )
+                    form.toPrice = applied.value
+                    form.lastSuggestedToPrice = applied.lastSuggested
+                    if (suggested == null) {
+                        onRequestQuote(instrument)
+                    }
+                }
             }
         }
 
@@ -670,8 +787,6 @@ internal fun buildEvents(
     initial: Event?,
 ): Result<List<Event>> = runCatching {
     runCatching { parseEventTime(form.date) }.getOrElse { error("日期格式无效") }
-    val now = OffsetDateTime.now().toString()
-    val createdAt = initial?.createdAt?.takeIf { it.isNotBlank() } ?: now
 
     when (form.type) {
         "transfer" -> {
@@ -740,7 +855,6 @@ internal fun buildEvents(
             val transfer = TransferEvent(
                 id = if (initial is TransferEvent) initial.id else UUID.randomUUID().toString(),
                 date = form.date,
-                createdAt = createdAt,
                 note = form.note,
                 from = PositionRef(fromInstitutionId, fromInstrument.id),
                 to = PositionRef(toInstitutionId, toInstrument.id),
@@ -780,7 +894,6 @@ internal fun buildEvents(
             val income = IncomeEvent(
                 id = incomeId,
                 date = form.date,
-                createdAt = createdAt,
                 note = form.note,
                 kind = if (form.incomeKind == "dividend") IncomeKind.DIVIDEND else IncomeKind.INTEREST,
                 source = source,
@@ -795,7 +908,6 @@ internal fun buildEvents(
                 ExternalEvent(
                     id = it,
                     date = form.date,
-                    createdAt = now,
                     note = "收益转出",
                     direction = ExternalDirection.OUT,
                     classification = ExternalClassification.CONSUMPTION,
@@ -825,7 +937,6 @@ internal fun buildEvents(
                 ExternalEvent(
                     id = if (initial is ExternalEvent) initial.id else UUID.randomUUID().toString(),
                     date = form.date,
-                    createdAt = createdAt,
                     note = form.note,
                     direction = direction,
                     classification = classification,
@@ -856,7 +967,6 @@ internal fun buildEvents(
                 ExpenseEvent(
                     id = if (initial is ExpenseEvent) initial.id else UUID.randomUUID().toString(),
                     date = form.date,
-                    createdAt = createdAt,
                     note = form.note,
                     position = position,
                     amount = amount,
@@ -887,7 +997,6 @@ internal fun buildEvents(
                 OpeningEvent(
                     id = if (initial is OpeningEvent) initial.id else UUID.randomUUID().toString(),
                     date = form.date,
-                    createdAt = createdAt,
                     note = form.note,
                     position = PositionRef(institutionId, instrument.id),
                     quantity = quantity,
@@ -909,7 +1018,6 @@ internal fun buildEvents(
                 AdjustmentEvent(
                     id = if (initial is AdjustmentEvent) initial.id else UUID.randomUUID().toString(),
                     date = form.date,
-                    createdAt = createdAt,
                     note = form.note,
                     position = PositionRef(institutionId, instrument.id),
                     deltaQuantity = deltaQuantity,
@@ -1033,15 +1141,18 @@ internal fun swapTransferSides(form: EventForm) {
     val fromInstId = form.fromInstitutionId
     val fromQty = form.fromQuantity
     val fromPx = form.fromPrice
+    val fromLastPx = form.lastSuggestedFromPrice
 
     form.fromInstrumentId = form.toInstrumentId
     form.fromInstitutionId = form.toInstitutionId
     form.fromQuantity = form.toQuantity
     form.fromPrice = form.toPrice
+    form.lastSuggestedFromPrice = form.lastSuggestedToPrice
 
     form.toInstrumentId = fromInst
     form.toInstitutionId = fromInstId
     form.toQuantity = fromQty
     form.toPrice = fromPx
+    form.lastSuggestedToPrice = fromLastPx
     form.lastSuggestedToQuantity = null
 }

@@ -122,45 +122,44 @@ fun HomeScreen(
     ) {
         item { SummaryCard(snapshot) }
 
-        if (data.instruments.isEmpty()) {
-            item { EmptyHomeCard() }
-        } else {
-            if (snapshot.hasMissingPrices) {
-                item { MissingPricesBanner() }
-            }
-            item {
-                PortfolioOverview(
-                    categories = snapshot.categories,
-                    onCategoryClick = { categoryId ->
-                        expandedIds = expandedIds + categoryId
-                        val categoryIndex = snapshot.categories
-                            .indexOfFirst { it.category.id == categoryId }
-                        if (categoryIndex >= 0) {
-                            scope.launch {
-                                listState.animateScrollToItem(firstCategoryIndex + categoryIndex)
-                            }
+        // The allocation is always shown, even without any holdings: an
+        // empty portfolio then reads as every category sitting at 0%, which
+        // keeps the target ranges visible from the first launch.
+        if (snapshot.hasMissingPrices) {
+            item { MissingPricesBanner() }
+        }
+        item {
+            PortfolioOverview(
+                categories = snapshot.categories,
+                onCategoryClick = { categoryId ->
+                    expandedIds = expandedIds + categoryId
+                    val categoryIndex = snapshot.categories
+                        .indexOfFirst { it.category.id == categoryId }
+                    if (categoryIndex >= 0) {
+                        scope.launch {
+                            listState.animateScrollToItem(firstCategoryIndex + categoryIndex)
                         }
-                    },
-                )
-            }
-            items(snapshot.categories, key = { it.category.id }) { category ->
-                CategoryCard(
-                    category = category,
-                    data = data,
-                    quotes = quotes,
-                    snapshot = snapshot,
-                    positions = positions,
-                    expanded = category.category.id in expandedIds,
-                    onToggleExpanded = {
-                        val id = category.category.id
-                        expandedIds = if (id in expandedIds) {
-                            expandedIds - id
-                        } else {
-                            expandedIds + id
-                        }
-                    },
-                )
-            }
+                    }
+                },
+            )
+        }
+        items(snapshot.categories, key = { it.category.id }) { category ->
+            CategoryCard(
+                category = category,
+                data = data,
+                quotes = quotes,
+                snapshot = snapshot,
+                positions = positions,
+                expanded = category.category.id in expandedIds,
+                onToggleExpanded = {
+                    val id = category.category.id
+                    expandedIds = if (id in expandedIds) {
+                        expandedIds - id
+                    } else {
+                        expandedIds + id
+                    }
+                },
+            )
         }
     }
 }
@@ -988,22 +987,6 @@ private fun resolveColumnCenters(
     separateBackward()
     separateForward()
     return centers.toList()
-}
-
-@Composable
-private fun EmptyHomeCard() {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Text(
-                text = "暂无数据",
-                style = MaterialTheme.typography.titleMedium,
-            )
-        }
-    }
 }
 
 @Composable

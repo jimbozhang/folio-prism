@@ -27,5 +27,9 @@ fun Event.sortInstant(): OffsetDateTime = parseEventTime(date)
 
 fun Event.localDate(): LocalDate = sortInstant().toLocalDate()
 
+/**
+ * Orders events by when they happened; events recorded with the same instant
+ * fall back to their id for a stable order.
+ */
 fun eventComparator(): Comparator<Event> =
-    compareBy<Event>({ it.sortInstant() }, { it.createdAt }, { it.id })
+    compareBy<Event>({ it.sortInstant() }, { it.id })
