@@ -22,7 +22,6 @@ import com.jimbozhang.folioprism.domain.money.toMoneyAmount
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import java.math.BigDecimal
 import java.math.RoundingMode
-import java.time.OffsetDateTime
 import java.util.UUID
 import kotlinx.serialization.Serializable
 
@@ -90,16 +89,14 @@ object WebEventBuilder {
         initial: Event?,
     ): Result<List<Event>> = runCatching {
         runCatching { parseEventTime(draft.date) }.getOrElse { error("日期格式无效") }
-        val now = OffsetDateTime.now().toString()
-        val createdAt = initial?.createdAt?.takeIf { it.isNotBlank() } ?: now
 
         when (draft.type) {
-            "transfer" -> buildTransfer(data, quotes, draft, initial, createdAt)
-            "income" -> buildIncome(data, quotes, draft, initial, createdAt, now)
-            "external" -> buildExternal(data, draft, initial, createdAt)
-            "expense" -> buildExpense(data, draft, initial, createdAt)
-            "opening" -> buildOpening(data, quotes, draft, initial, createdAt)
-            "adjustment" -> buildAdjustment(data, quotes, draft, initial, createdAt)
+            "transfer" -> buildTransfer(data, quotes, draft, initial)
+            "income" -> buildIncome(data, quotes, draft, initial)
+            "external" -> buildExternal(data, draft, initial)
+            "expense" -> buildExpense(data, draft, initial)
+            "opening" -> buildOpening(data, quotes, draft, initial)
+            "adjustment" -> buildAdjustment(data, quotes, draft, initial)
             else -> error("未知事件类型")
         }
     }
@@ -109,7 +106,6 @@ object WebEventBuilder {
         quotes: QuoteSnapshot,
         draft: WebEventDraft,
         initial: Event?,
-        createdAt: String,
     ): List<Event> {
         val fromInstitutionId = draft.fromInstitutionId ?: error("请选择转出机构")
         val toInstitutionId = draft.toInstitutionId ?: error("请选择转入机构")
@@ -177,7 +173,6 @@ object WebEventBuilder {
             TransferEvent(
                 id = if (initial is TransferEvent) initial.id else UUID.randomUUID().toString(),
                 date = draft.date,
-                createdAt = createdAt,
                 note = draft.note,
                 from = PositionRef(fromInstitutionId, fromInstrument.id),
                 to = PositionRef(toInstitutionId, toInstrument.id),
@@ -199,8 +194,6 @@ object WebEventBuilder {
         quotes: QuoteSnapshot,
         draft: WebEventDraft,
         initial: Event?,
-        createdAt: String,
-        now: String,
     ): List<Event> {
         val destinationInstitutionId = draft.incomeInstitutionId ?: error("请选择入账机构")
         val destinationInstrument = requireInstrument(data, draft.incomeInstrumentId, "入账账户")
@@ -223,7 +216,6 @@ object WebEventBuilder {
         val income = IncomeEvent(
             id = incomeId,
             date = draft.date,
-            createdAt = createdAt,
             note = draft.note,
             kind = if (draft.incomeKind == "dividend") IncomeKind.DIVIDEND else IncomeKind.INTEREST,
             source = source,
@@ -238,7 +230,6 @@ object WebEventBuilder {
             ExternalEvent(
                 id = it,
                 date = draft.date,
-                createdAt = now,
                 note = "收益转出",
                 direction = ExternalDirection.OUT,
                 classification = ExternalClassification.CONSUMPTION,
@@ -255,7 +246,6 @@ object WebEventBuilder {
         data: PortfolioData,
         draft: WebEventDraft,
         initial: Event?,
-        createdAt: String,
     ): List<Event> {
         val institutionId = draft.externalInstitutionId ?: error("请选择现金账户机构")
         val instrument = requireInstrument(data, draft.externalInstrumentId, "现金账户")
@@ -274,7 +264,6 @@ object WebEventBuilder {
             ExternalEvent(
                 id = if (initial is ExternalEvent) initial.id else UUID.randomUUID().toString(),
                 date = draft.date,
-                createdAt = createdAt,
                 note = draft.note,
                 direction = direction,
                 classification = classification,
@@ -290,7 +279,6 @@ object WebEventBuilder {
         data: PortfolioData,
         draft: WebEventDraft,
         initial: Event?,
-        createdAt: String,
     ): List<Event> {
         val amount = nonZero(draft.expenseAmount, "金额")
         val position = if (draft.expenseNoPosition) {
@@ -311,7 +299,6 @@ object WebEventBuilder {
             ExpenseEvent(
                 id = if (initial is ExpenseEvent) initial.id else UUID.randomUUID().toString(),
                 date = draft.date,
-                createdAt = createdAt,
                 note = draft.note,
                 position = position,
                 amount = amount,
@@ -327,7 +314,6 @@ object WebEventBuilder {
         quotes: QuoteSnapshot,
         draft: WebEventDraft,
         initial: Event?,
-        createdAt: String,
     ): List<Event> {
         val institutionId = draft.openingInstitutionId ?: error("请选择机构")
         val instrument = requireInstrument(data, draft.openingInstrumentId, "标的")
@@ -346,7 +332,6 @@ object WebEventBuilder {
             OpeningEvent(
                 id = if (initial is OpeningEvent) initial.id else UUID.randomUUID().toString(),
                 date = draft.date,
-                createdAt = createdAt,
                 note = draft.note,
                 position = PositionRef(institutionId, instrument.id),
                 quantity = if (cash) null else value,
@@ -361,7 +346,6 @@ object WebEventBuilder {
         quotes: QuoteSnapshot,
         draft: WebEventDraft,
         initial: Event?,
-        createdAt: String,
     ): List<Event> {
         val institutionId = draft.adjustmentInstitutionId ?: error("请选择机构")
         val instrument = requireInstrument(data, draft.adjustmentInstrumentId, "标的")
@@ -372,7 +356,6 @@ object WebEventBuilder {
             AdjustmentEvent(
                 id = if (initial is AdjustmentEvent) initial.id else UUID.randomUUID().toString(),
                 date = draft.date,
-                createdAt = createdAt,
                 note = draft.note,
                 position = PositionRef(institutionId, instrument.id),
                 deltaQuantity = if (cash) null else value,

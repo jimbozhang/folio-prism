@@ -1,6 +1,7 @@
 package com.jimbozhang.folioprism.data.json
 
 import com.jimbozhang.folioprism.domain.model.PortfolioData
+import com.jimbozhang.folioprism.domain.model.withoutLegacyCreatedAt
 import java.io.File
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -17,7 +18,15 @@ object PortfolioJson {
 
     fun encode(data: PortfolioData): String = json.encodeToString(data)
 
-    fun decode(text: String): PortfolioData = json.decodeFromString(text)
+    /**
+     * Decoding also drops the legacy per-event recording timestamp, so files
+     * written by older versions lose it on their next save instead of keeping
+     * it until every event happens to be edited.
+     */
+    fun decode(text: String): PortfolioData =
+        json.decodeFromString<PortfolioData>(text).let { data ->
+            data.copy(events = data.events.map { it.withoutLegacyCreatedAt() })
+        }
 
     fun load(file: File): PortfolioData =
         decode(file.readText(Charsets.UTF_8))

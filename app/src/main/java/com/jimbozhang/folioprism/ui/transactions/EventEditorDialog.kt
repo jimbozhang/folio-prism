@@ -787,8 +787,6 @@ internal fun buildEvents(
     initial: Event?,
 ): Result<List<Event>> = runCatching {
     runCatching { parseEventTime(form.date) }.getOrElse { error("日期格式无效") }
-    val now = OffsetDateTime.now().toString()
-    val createdAt = initial?.createdAt?.takeIf { it.isNotBlank() } ?: now
 
     when (form.type) {
         "transfer" -> {
@@ -857,7 +855,6 @@ internal fun buildEvents(
             val transfer = TransferEvent(
                 id = if (initial is TransferEvent) initial.id else UUID.randomUUID().toString(),
                 date = form.date,
-                createdAt = createdAt,
                 note = form.note,
                 from = PositionRef(fromInstitutionId, fromInstrument.id),
                 to = PositionRef(toInstitutionId, toInstrument.id),
@@ -897,7 +894,6 @@ internal fun buildEvents(
             val income = IncomeEvent(
                 id = incomeId,
                 date = form.date,
-                createdAt = createdAt,
                 note = form.note,
                 kind = if (form.incomeKind == "dividend") IncomeKind.DIVIDEND else IncomeKind.INTEREST,
                 source = source,
@@ -912,7 +908,6 @@ internal fun buildEvents(
                 ExternalEvent(
                     id = it,
                     date = form.date,
-                    createdAt = now,
                     note = "收益转出",
                     direction = ExternalDirection.OUT,
                     classification = ExternalClassification.CONSUMPTION,
@@ -942,7 +937,6 @@ internal fun buildEvents(
                 ExternalEvent(
                     id = if (initial is ExternalEvent) initial.id else UUID.randomUUID().toString(),
                     date = form.date,
-                    createdAt = createdAt,
                     note = form.note,
                     direction = direction,
                     classification = classification,
@@ -973,7 +967,6 @@ internal fun buildEvents(
                 ExpenseEvent(
                     id = if (initial is ExpenseEvent) initial.id else UUID.randomUUID().toString(),
                     date = form.date,
-                    createdAt = createdAt,
                     note = form.note,
                     position = position,
                     amount = amount,
@@ -1004,7 +997,6 @@ internal fun buildEvents(
                 OpeningEvent(
                     id = if (initial is OpeningEvent) initial.id else UUID.randomUUID().toString(),
                     date = form.date,
-                    createdAt = createdAt,
                     note = form.note,
                     position = PositionRef(institutionId, instrument.id),
                     quantity = quantity,
@@ -1026,7 +1018,6 @@ internal fun buildEvents(
                 AdjustmentEvent(
                     id = if (initial is AdjustmentEvent) initial.id else UUID.randomUUID().toString(),
                     date = form.date,
-                    createdAt = createdAt,
                     note = form.note,
                     position = PositionRef(institutionId, instrument.id),
                     deltaQuantity = deltaQuantity,
