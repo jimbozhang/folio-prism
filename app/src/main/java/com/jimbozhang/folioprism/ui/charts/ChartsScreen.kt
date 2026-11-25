@@ -723,8 +723,16 @@ private fun LazyListScope.categoryPnlContent(
             } else {
                 pnl.fold(BigDecimal.ZERO) { acc, item -> acc.add(item.pnlCny ?: BigDecimal.ZERO) }
             }
+            // Value of each category at the start of the range, used as the
+            // denominator of the per-category range return shown below.
+            val startValues = pnl.associate { row ->
+                row.categoryId to ready.result.curve
+                    .firstOrNull { point -> point.categoryValues[row.categoryId] != null }
+                    ?.categoryValues
+                    ?.get(row.categoryId)
+            }
             item { BigPnlHeader("类别盈亏合计", totalPnl, incomplete) }
-            item { CategoryPnlBlock(pnl) }
+            item { CategoryPnlBlock(pnl, startValues) }
         }
 
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
@@ -1748,7 +1756,7 @@ private fun BigValueHeader(label: String, value: String, color: Color) {
 }
 
 @Composable
-private fun CategoryPnlBlock(rows: List<CategoryPnl>) {
+private fun CategoryPnlBlock(rows: List<CategoryPnl>, startValues: Map<String, BigDecimal?>) {
     val sorted = rows.sortedWith(
         compareBy<CategoryPnl> { it.pnlCny == null }
             .thenByDescending { it.pnlCny ?: BigDecimal.ZERO },
@@ -1761,8 +1769,6 @@ private fun CategoryPnlBlock(rows: List<CategoryPnl>) {
         .minOrNull()
         ?.abs()
         ?: BigDecimal.ZERO
-    val totalAbs = sorted.mapNotNull { it.pnlCny?.abs() }
-        .fold(BigDecimal.ZERO) { acc, value -> acc.add(value) }
     val combined = maxGain.add(maxLoss)
     val zeroFraction = if (combined.signum() > 0) {
         maxLoss.divide(combined, 10, java.math.RoundingMode.HALF_UP).toFloat()
@@ -1775,7 +1781,7 @@ private fun CategoryPnlBlock(rows: List<CategoryPnl>) {
             if (index > 0) {
                 HorizontalDivider(modifier = Modifier.padding(start = 16.dp), color = FolioDivider)
             }
-            CategoryPnlRow(row, maxGain, maxLoss, zeroFraction, totalAbs)
+            CategoryPnlRow(row, maxGain, maxLoss, zeroFraction, startValues[row.categoryId])
         }
     }
 }
@@ -1786,12 +1792,14 @@ private fun CategoryPnlRow(
     maxGain: BigDecimal,
     maxLoss: BigDecimal,
     zeroFraction: Float,
-    totalAbs: BigDecimal,
+    startValue: BigDecimal?,
 ) {
     val value = pnl.pnlCny
     val color = pnlColor(value)
-    val share = if (value != null && totalAbs.signum() > 0) {
-        value.abs().divide(totalAbs, 6, java.math.RoundingMode.HALF_UP)
+    // Range return: this category's P&L over its value at the start of the
+    // range. Negative when the category lost money over the range.
+    val share = if (value != null && startValue != null && startValue.signum() > 0) {
+        value.divide(startValue, 6, java.math.RoundingMode.HALF_UP)
     } else {
         null
     }

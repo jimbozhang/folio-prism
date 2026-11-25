@@ -811,7 +811,7 @@ internal fun ExpenseSection(
     }
     FormDivider()
     AmountHero(
-        label = "支出金额",
+        label = "损耗金额",
         unit = currency,
         value = form.expenseAmount,
         onValueChange = { form.expenseAmount = it },

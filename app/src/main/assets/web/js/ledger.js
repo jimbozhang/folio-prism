@@ -3,14 +3,14 @@ const LedgerView = (() => {
   const EVENT_TYPES = [
     { key: 'transfer', label: '转账' },
     { key: 'income', label: '收入' },
-    { key: 'expense', label: '支出' },
+    { key: 'expense', label: '损耗' },
     { key: 'external', label: '外部资金' },
     { key: 'opening', label: '建仓' },
     { key: 'adjustment', label: '调整' },
   ];
 
   const TYPE_LABEL = {
-    transfer: '转账', income: '收入', expense: '支出',
+    transfer: '转账', income: '收入', expense: '损耗',
     external: '外部资金', opening: '建仓', adjustment: '调整',
   };
 

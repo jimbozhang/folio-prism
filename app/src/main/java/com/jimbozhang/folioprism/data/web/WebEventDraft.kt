@@ -286,7 +286,7 @@ object WebEventBuilder {
         } else {
             val institutionId = draft.expenseInstitutionId ?: error("请选择现金账户机构")
             val instrument = requireInstrument(data, draft.expenseInstrumentId, "现金账户")
-            if (instrument.kind != InstrumentKind.CASH) error("现金支出必须使用现金标的")
+            if (instrument.kind != InstrumentKind.CASH) error("现金损耗必须使用现金标的")
             PositionRef(institutionId, instrument.id)
         }
         if (draft.expenseCategoryId.isBlank()) error("请选择类别")

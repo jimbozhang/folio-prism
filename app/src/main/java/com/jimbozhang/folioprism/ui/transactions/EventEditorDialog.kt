@@ -108,7 +108,7 @@ private const val TRANSFER_FEE_NOTE = "转账手续费"
 private val eventTypeOptions = listOf(
     "transfer" to "转账",
     "income" to "收益",
-    "expense" to "支出",
+    "expense" to "损耗",
     "external" to "外部",
     "opening" to "期初",
     "adjustment" to "调整",
@@ -955,7 +955,7 @@ internal fun buildEvents(
             } else {
                 val institutionId = form.expenseInstitutionId ?: error("请选择现金账户机构")
                 val instrument = requireInstrument(data, form.expenseInstrumentId, "现金账户")
-                if (instrument.kind != InstrumentKind.CASH) error("现金支出必须使用现金标的")
+                if (instrument.kind != InstrumentKind.CASH) error("现金损耗必须使用现金标的")
                 PositionRef(institutionId, instrument.id)
             }
             val currency = if (form.expenseNoPosition) {

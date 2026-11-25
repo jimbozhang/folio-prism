@@ -538,7 +538,7 @@ internal fun eventTypeLabel(event: Event): String = when (event) {
     is TransferEvent -> "转账"
     is IncomeEvent -> if (event.kind == IncomeKind.DIVIDEND) "分红" else "利息"
     is ExternalEvent -> if (event.direction == ExternalDirection.IN) "外部入金" else "外部出金"
-    is ExpenseEvent -> "支出"
+    is ExpenseEvent -> "损耗"
     is OpeningEvent -> "期初"
     is AdjustmentEvent -> "调整"
 }

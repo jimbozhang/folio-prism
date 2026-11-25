@@ -335,7 +335,7 @@ class WebEventDraftTest {
             expenseAmount = "1",
             expenseCategoryId = CategoryIds.CASH,
         )
-        assertEquals("现金支出必须使用现金标的", failure(nonCash))
+        assertEquals("现金损耗必须使用现金标的", failure(nonCash))
     }
 
     @Test
