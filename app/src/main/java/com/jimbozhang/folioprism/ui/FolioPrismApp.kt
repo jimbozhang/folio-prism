@@ -92,6 +92,7 @@ fun FolioPrismApp(viewModel: AppViewModel = viewModel()) {
             onRefresh = viewModel::refreshQuotes,
             onUpdateData = viewModel::updateData,
             onFetchQuote = viewModel::fetchQuoteFor,
+            onLookupInstrumentName = viewModel::lookupInstrumentName,
         )
     }
 }
@@ -108,6 +109,7 @@ private fun MainScaffold(
     onRefresh: () -> Unit,
     onUpdateData: ((PortfolioData) -> PortfolioData) -> Unit,
     onFetchQuote: (Instrument) -> Unit,
+    onLookupInstrumentName: (Instrument, (String?) -> Unit) -> Unit,
 ) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -181,6 +183,7 @@ private fun MainScaffold(
                 SettingsScreen(
                     data = data,
                     onUpdateData = onUpdateData,
+                    onLookupInstrumentName = onLookupInstrumentName,
                     contentPadding = PaddingValues(0.dp),
                 )
             }

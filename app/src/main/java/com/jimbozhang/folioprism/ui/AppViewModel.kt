@@ -16,6 +16,7 @@ import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.QuoteMode
+import com.jimbozhang.folioprism.domain.model.Settings
 import com.jimbozhang.folioprism.domain.quote.QuoteFailure
 import com.jimbozhang.folioprism.domain.quote.QuoteFailureKind
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
@@ -227,6 +228,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } finally {
                 quoteFetchesInFlight -= instrument.id
             }
+        }
+    }
+
+    /**
+     * Looks up the display name of an instrument from its quote source so the
+     * instrument editor can prefill the name field after the code is typed.
+     * Best effort: unknown codes and failed requests report null.
+     */
+    fun lookupInstrumentName(instrument: Instrument, onResult: (String?) -> Unit) {
+        val goldSource = (currentData()?.settings ?: Settings()).gold.defaultSource
+        viewModelScope.launch {
+            val name = runCatching { quoteService.lookupName(instrument, goldSource) }
+                .getOrNull()
+            onResult(name)
         }
     }
 

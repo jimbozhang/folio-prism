@@ -243,6 +243,26 @@ class QuoteService(
         )
     }
 
+    /**
+     * Looks up the display name of an instrument from the same source its live
+     * quotes would use — e.g. to prefill the name field of the instrument
+     * editor after the code is typed. The instrument is usually not saved
+     * yet, so it is only read for routing. Returns null when the routed
+     * source does not know the code or the request fails.
+     */
+    suspend fun lookupName(instrument: Instrument, goldSource: String): String? =
+        when (val route = QuoteRouter.route(instrument, goldSource)) {
+            QuoteRoute.FundBatch ->
+                runCatching { fetchFundBatch(listOf(instrument.code)) }.getOrNull()
+                    ?.get(instrument.code)?.name
+            QuoteRoute.TencentEtf -> runCatching { fetchEtf(instrument) }.getOrNull()?.name
+            QuoteRoute.TencentUs -> runCatching { fetchUs(instrument) }.getOrNull()?.name
+            // Gold codes are self-describing; no request needed.
+            QuoteRoute.GoldSge -> "AU9999"
+            QuoteRoute.GoldXau -> "XAU"
+            else -> null
+        }
+
     private suspend fun fetchGoldQuotes(
         required: List<RequiredInstrument>,
         routes: Map<String, QuoteRoute>,

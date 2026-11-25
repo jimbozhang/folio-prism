@@ -27,6 +27,7 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -267,6 +268,75 @@ class QuoteServiceTest {
 
         val failure = snapshot.failures.single()
         assertTrue(failure.institutionIds.containsAll(listOf(INST_A, INST_B)))
+    }
+
+    @Test
+    fun lookupNameReturnsFundShortName() = runBlocking {
+        val fund = quotedInstrument("f", CategoryIds.GROWTH, code = "008163")
+        val fetcher = fetcherFor()
+        val name = QuoteService(fetcher, now = { "now" }).lookupName(fund, "XAU")
+
+        assertEquals("Fund", name)
+        assertTrue(fetcher.requests.any { it.contains("fundmobapi") })
+    }
+
+    @Test
+    fun lookupNameReturnsEtfName() = runBlocking {
+        val etf = quotedInstrument("etf", CategoryIds.US_EQUITY, code = "513500")
+        val name = QuoteService(fetcherFor(), now = { "now" }).lookupName(etf, "XAU")
+
+        assertEquals("ETF", name)
+    }
+
+    @Test
+    fun lookupNameReturnsUsTickerName() = runBlocking {
+        val us = quotedInstrument("us", CategoryIds.US_EQUITY, code = "VOO")
+        val name = QuoteService(fetcherFor(), now = { "now" }).lookupName(us, "XAU")
+
+        assertEquals("VOO", name)
+    }
+
+    @Test
+    fun lookupNameReturnsStaticGoldNameWithoutNetwork() = runBlocking {
+        val gold = quotedInstrument("g", CategoryIds.GOLD, code = "AU9999")
+        val fetcher = FakeFetcher { error("no network expected for $it") }
+        val service = QuoteService(fetcher, now = { "now" })
+
+        assertEquals("AU9999", service.lookupName(gold, "AU9999"))
+        assertEquals("XAU", service.lookupName(gold, "XAU"))
+        assertTrue(fetcher.requests.isEmpty())
+    }
+
+    @Test
+    fun lookupNameReturnsNullForUnknownFundCode() = runBlocking {
+        val fund = quotedInstrument("f", CategoryIds.GROWTH, code = "999999")
+        val name = QuoteService(fetcherFor(fund = """{"Success":true,"Datas":[]}"""), now = { "now" })
+            .lookupName(fund, "XAU")
+
+        assertNull(name)
+    }
+
+    @Test
+    fun lookupNameReturnsNullOnNetworkFailure() = runBlocking {
+        val fund = quotedInstrument("f", CategoryIds.GROWTH, code = "008163")
+        val name = QuoteService(FakeFetcher { error("network down") }, now = { "now" })
+            .lookupName(fund, "XAU")
+
+        assertNull(name)
+    }
+
+    @Test
+    fun lookupNameIsNotAttemptedForManualOrCashInstruments() = runBlocking {
+        val fetcher = FakeFetcher { error("should not request $it") }
+        val service = QuoteService(fetcher, now = { "now" })
+        val manual = quotedInstrument("m", CategoryIds.GROWTH, code = "008163").copy(
+            quote = QuoteConfig(mode = QuoteMode.MANUAL, manualPrice = bd("1")),
+        )
+        val cash = cashInstrument("cash", "CNY")
+
+        assertNull(service.lookupName(manual, "XAU"))
+        assertNull(service.lookupName(cash, "XAU"))
+        assertTrue(fetcher.requests.isEmpty())
     }
 }
 

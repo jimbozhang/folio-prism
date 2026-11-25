@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.jimbozhang.folioprism.data.web.WebDataUiState
 import com.jimbozhang.folioprism.data.web.WebDataService
+import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.platform.storage.StoragePaths
 import com.jimbozhang.folioprism.ui.theme.FolioBlue
@@ -55,6 +56,7 @@ private enum class SettingsPage {
 fun SettingsScreen(
     data: PortfolioData,
     onUpdateData: ((PortfolioData) -> PortfolioData) -> Unit,
+    onLookupInstrumentName: (Instrument, (String?) -> Unit) -> Unit,
     contentPadding: PaddingValues,
 ) {
     var page by remember { mutableStateOf(SettingsPage.MAIN) }
@@ -75,6 +77,7 @@ fun SettingsScreen(
             data = data,
             onBack = { page = SettingsPage.MAIN },
             onUpdateData = onUpdateData,
+            onLookupName = onLookupInstrumentName,
         )
         return
     }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -18,9 +19,11 @@ import androidx.compose.material.icons.outlined.CurrencyExchange
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +61,7 @@ internal fun InstrumentManagementScreen(
     data: PortfolioData,
     onBack: () -> Unit,
     onUpdateData: ((PortfolioData) -> PortfolioData) -> Unit,
+    onLookupName: (Instrument, (String?) -> Unit) -> Unit,
 ) {
     var showEditor by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Instrument?>(null) }
@@ -146,6 +150,7 @@ internal fun InstrumentManagementScreen(
         InstrumentFormDialog(
             initial = editing,
             categories = data.settings.categories,
+            onLookupName = onLookupName,
             onDismiss = {
                 showEditor = false
                 editing = null
@@ -188,6 +193,7 @@ internal fun InstrumentManagementScreen(
 private fun InstrumentFormDialog(
     initial: Instrument?,
     categories: List<Category>,
+    onLookupName: (Instrument, (String?) -> Unit) -> Unit,
     onDismiss: () -> Unit,
     onSave: (Instrument) -> String?,
     onDelete: (() -> String?)?,
@@ -220,6 +226,18 @@ private fun InstrumentFormDialog(
         mutableStateOf(initial?.currencyExposure ?: "auto")
     }
     var notes by remember(initial?.id) { mutableStateOf(initial?.notes ?: "") }
+
+    // True while a source lookup is in flight; the lookup button shows it.
+    var nameLookupPending by remember(initial?.id) { mutableStateOf(false) }
+    // Set when a lookup is attempted while the name field is still filled;
+    // the hint stays until the name is cleared again.
+    var lookupBlocked by remember(initial?.id) { mutableStateOf(false) }
+
+    // New instruments only: an existing one already has a name. Cash and
+    // manual-price instruments have no source to query.
+    val showNameLookup = initial == null &&
+        kind == InstrumentKind.QUOTED &&
+        quoteMode != QuoteMode.MANUAL
 
     ManagementFormDialog(
         title = if (initial == null) "新增标的" else "编辑标的",
@@ -275,11 +293,89 @@ private fun InstrumentFormDialog(
                 icon = Icons.Outlined.EditNote,
                 iconTint = FolioGold,
                 label = "代码",
+                trailing = {
+                    if (showNameLookup) {
+                        TextButton(
+                            onClick = {
+                                val trimmed = code.trim()
+                                if (trimmed.isEmpty() || nameLookupPending) return@TextButton
+                                if (name.isNotBlank()) {
+                                    lookupBlocked = true
+                                    return@TextButton
+                                }
+                                lookupBlocked = false
+                                nameLookupPending = true
+                                onLookupName(
+                                    Instrument(
+                                        id = "",
+                                        categoryId = categoryId,
+                                        code = trimmed,
+                                        name = "",
+                                        currency = currency,
+                                        unit = "",
+                                        kind = kind,
+                                        quote = QuoteConfig(
+                                            mode = quoteMode,
+                                            source = "auto",
+                                            manualPrice = null,
+                                        ),
+                                    ),
+                                ) { found ->
+                                    nameLookupPending = false
+                                    // The name may have been typed while the
+                                    // lookup was in flight; never overwrite it.
+                                    if (found != null && name.isBlank()) {
+                                        name = found
+                                    }
+                                }
+                            },
+                            enabled = code.isNotBlank() && !nameLookupPending,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            if (nameLookupPending) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 1.5.dp,
+                                    color = FolioMuted,
+                                )
+                            } else {
+                                Text(
+                                    text = "获取名称",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FolioMuted,
+                                )
+                            }
+                        }
+                    }
+                },
             ) {
                 InlineTextField(
                     value = code,
                     onValueChange = { code = it },
                     placeholder = "如 008163",
+                )
+            }
+            if (showNameLookup && lookupBlocked && name.isNotBlank()) {
+                Text(
+                    text = "名称不为空，请先清空名称再获取",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioCoral,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                )
+            }
+            FormDivider()
+            FormRow(
+                icon = Icons.Outlined.Category,
+                iconTint = FolioGold,
+                label = "标的类型",
+            ) {
+                InlineDropdown(
+                    selectedId = kind.name,
+                    options = listOf(
+                        "QUOTED" to "有净值",
+                        "CASH" to "现金",
+                    ),
+                    onSelected = { kind = InstrumentKind.valueOf(it) },
                 )
             }
             FormDivider()
@@ -326,21 +422,6 @@ private fun InstrumentFormDialog(
         }
         Spacer(modifier = Modifier.height(8.dp))
         ManagementFormSection {
-            FormRow(
-                icon = Icons.Outlined.Category,
-                iconTint = FolioGold,
-                label = "标的类型",
-            ) {
-                InlineDropdown(
-                    selectedId = kind.name,
-                    options = listOf(
-                        "QUOTED" to "有净值",
-                        "CASH" to "现金",
-                    ),
-                    onSelected = { kind = InstrumentKind.valueOf(it) },
-                )
-            }
-            FormDivider()
             FormRow(
                 icon = Icons.AutoMirrored.Outlined.ShowChart,
                 iconTint = FolioCoral,
