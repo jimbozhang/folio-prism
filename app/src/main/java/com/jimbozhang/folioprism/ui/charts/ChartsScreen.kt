@@ -2218,7 +2218,9 @@ private fun institutionRows(
         FolioGreen,
         Color(0xFFB2BEC3),
     )
+    // Institutions without any current value are noise in the distribution.
     return snapshot.brokerValues
+        .filter { (_, value) -> value.signum() != 0 }
         .map { (id, value) ->
             val institution = data.institutions.firstOrNull { it.id == id }
             val name = institution?.chartAlias ?: institution?.name ?: id
@@ -2237,7 +2239,9 @@ private fun currencyRows(snapshot: PortfolioSnapshot): List<DistributionRowData>
         "HKD" to Color(0xFF6C5CE7),
         "PHYSICAL_GOLD" to Color(0xFFF9CA24),
     )
+    // Currencies without any current value are noise in the distribution.
     return snapshot.currencyValues
+        .filter { (_, value) -> value.signum() != 0 }
         .map { (currency, value) ->
             val name = when (currency) {
                 "CNY" -> "人民币"

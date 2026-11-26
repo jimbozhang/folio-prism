@@ -160,9 +160,13 @@ const ChartsView = (() => {
       const seq = ++requestSeq;
       try {
         if (current.kind === 'snapshot') {
-          const rows = current.key === 'institutions'
+          // Distribution items without any current value are noise.
+          const rawRows = current.key === 'institutions'
             ? state.overview.institutions
             : state.overview.currencies;
+          const rows = (rawRows || []).filter(function (row) {
+            return Fmt.num(row.valueCny) !== 0;
+          });
           if (seq !== requestSeq) return;
           clearNode(content);
           this.renderDistribution(content, current.key, rows);

@@ -354,11 +354,18 @@ const OverviewView = {
     const card = el('div', 'card');
     card.appendChild(el('h2', 'card-title', '分布'));
     const grid = el('div', 'dist-grid');
-    grid.appendChild(distPanel('机构分布', overview.institutions, function (row, index) {
+    // Distribution items without any current value are noise.
+    const institutionRows = (overview.institutions || []).filter(function (row) {
+      return Fmt.num(row.valueCny) !== 0;
+    });
+    const currencyRows = (overview.currencies || []).filter(function (row) {
+      return Fmt.num(row.valueCny) !== 0;
+    });
+    grid.appendChild(distPanel('机构分布', institutionRows, function (row, index) {
       const palette = ['#e6a23c', '#e8613c', '#0984e3', '#6c5ce7', '#2e9e6b', '#b2bec3'];
       return palette[index % palette.length];
     }));
-    grid.appendChild(distPanel('币种分布', overview.currencies, function (row) {
+    grid.appendChild(distPanel('币种分布', currencyRows, function (row) {
       const colors = {
         CNY: '#e6a23c', USD: '#0984e3', HKD: '#6c5ce7', PHYSICAL_GOLD: '#f9ca24',
       };
