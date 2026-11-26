@@ -52,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -122,7 +123,6 @@ private enum class ChartType(
     val usesRange: Boolean,
 ) {
     ASSETS("总资产", Icons.AutoMirrored.Outlined.ShowChart, needsHistory = true, usesRange = true),
-    CATEGORY_ASSETS("类别资产", Icons.Outlined.StackedLineChart, needsHistory = true, usesRange = true),
     CATEGORY_PNL("类别盈亏", Icons.Outlined.PieChart, needsHistory = true, usesRange = true),
     FLOWS("投入取出", Icons.Outlined.Savings, needsHistory = false, usesRange = true),
     REBALANCE("调仓统计", Icons.Outlined.SwapVert, needsHistory = false, usesRange = true),
@@ -159,6 +159,15 @@ private val dateRangeSaver = listSaver<DateRange, Long>(
     restore = { DateRange(LocalDate.ofEpochDay(it[0]), LocalDate.ofEpochDay(it[1])) },
 )
 
+/** Survives the merge of the old CATEGORY_ASSETS tab into ASSETS. */
+private val chartTypeSaver = Saver<ChartType, String>(
+    save = { it.name },
+    restore = { name ->
+        ChartType.entries.firstOrNull { it.name == name }
+            ?: if (name == "CATEGORY_ASSETS") ChartType.ASSETS else ChartType.CATEGORY_PNL
+    },
+)
+
 @Composable
 fun ChartsScreen(
     data: PortfolioData,
@@ -179,7 +188,9 @@ fun ChartsScreen(
         data.events.minOfOrNull { it.localDate() }
     }
 
-    var chart by rememberSaveable { mutableStateOf(ChartType.CATEGORY_PNL) }
+    var chart by rememberSaveable(stateSaver = chartTypeSaver) {
+        mutableStateOf(ChartType.CATEGORY_PNL)
+    }
     var range by rememberSaveable(stateSaver = dateRangeSaver) {
         mutableStateOf(chart.defaultRange(today))
     }
@@ -187,11 +198,10 @@ fun ChartsScreen(
     val orderedCategories = remember(data.settings.categories) {
         data.settings.categories.sortedBy { it.order }
     }
-    var categoryId by rememberSaveable {
-        mutableStateOf(orderedCategories.firstOrNull()?.id ?: "")
-    }
-    val selectedCategory = orderedCategories.firstOrNull { it.id == categoryId }
-        ?: orderedCategories.firstOrNull()
+    // "" means the merged page shows the whole portfolio; otherwise the
+    // selected category's own curve.
+    var assetScopeId by rememberSaveable { mutableStateOf("") }
+    val selectedCategory = orderedCategories.firstOrNull { it.id == assetScopeId }
 
     val monthlyFlows = remember(data.events, range, quotes.fxRates) {
         monthlyFlows(data, quotes.fxRates, range)
@@ -264,17 +274,17 @@ fun ChartsScreen(
                 chart = selected
             },
         )
-        if (chart == ChartType.CATEGORY_ASSETS && selectedCategory != null) {
+        if (chart == ChartType.ASSETS) {
             CategorySelector(
                 categories = orderedCategories,
-                selected = selectedCategory,
-                onSelected = { categoryId = it },
+                selectedId = selectedCategory?.id,
+                onSelected = { assetScopeId = it },
             )
         }
 
-        // A fresh scroll position per chart (and per selected category) so a
-        // new page never opens halfway down with its first card clipped.
-        val listState = remember(chart, categoryId) { LazyListState() }
+        // A fresh scroll position per chart (and per selected scope) so a new
+        // page never opens halfway down with its first card clipped.
+        val listState = remember(chart, assetScopeId) { LazyListState() }
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -288,18 +298,11 @@ fun ChartsScreen(
                     historyState = historyState,
                     range = range,
                     snapshot = snapshot,
-                    onRetry = { onLoadHistory(range.from, range.to) },
-                )
-
-                ChartType.CATEGORY_ASSETS -> categoryAssetsContent(
-                    historyState = historyState,
-                    range = range,
-                    snapshot = snapshot,
                     data = data,
                     quotes = quotes,
                     positions = positions,
-                    categoryId = selectedCategory?.id ?: "",
-                    categoryName = selectedCategory?.name ?: "",
+                    categoryId = selectedCategory?.id,
+                    categoryName = selectedCategory?.name,
                     onRetry = { onLoadHistory(range.from, range.to) },
                 )
 
@@ -360,10 +363,13 @@ fun ChartsScreen(
 @Composable
 private fun CategorySelector(
     categories: List<Category>,
-    selected: Category,
+    selectedId: String?,
     onSelected: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val selected = categories.firstOrNull { it.id == selectedId }
+    val selectedName = selected?.name ?: "总资产"
+    val selectedColor = selected?.let(::categoryColor) ?: FolioGold
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -387,11 +393,11 @@ private fun CategorySelector(
                 modifier = Modifier
                     .size(8.dp)
                     .clip(CircleShape)
-                    .background(categoryColor(selected)),
+                    .background(selectedColor),
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = selected.name,
+                text = selectedName,
                 style = MaterialTheme.typography.titleSmall,
                 color = FolioInk,
             )
@@ -407,8 +413,38 @@ private fun CategorySelector(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
+            DropdownMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(FolioGold),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "总资产",
+                            color = if (selectedId == null) FolioGold else FolioInk,
+                        )
+                    }
+                },
+                trailingIcon = {
+                    if (selectedId == null) {
+                        Icon(
+                            imageVector = Icons.Outlined.Check,
+                            contentDescription = null,
+                            tint = FolioGold,
+                        )
+                    }
+                },
+                onClick = {
+                    onSelected("")
+                    expanded = false
+                },
+            )
             categories.forEach { category ->
-                val isSelected = category.id == selected.id
+                val isSelected = category.id == selectedId
                 DropdownMenuItem(
                     text = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -580,51 +616,20 @@ private fun ChartRangeBar(
     }
 }
 
+/**
+ * The merged 总资产 page. With no category selected it shows the whole
+ * portfolio; with a category selected it shows that category's curve, P&L,
+ * current amount and holdings. Both scopes share the range and chart modes.
+ */
 private fun LazyListScope.assetsContent(
-    historyState: HistoryUiState,
-    range: DateRange,
-    snapshot: PortfolioSnapshot,
-    onRetry: () -> Unit,
-) {
-    val ready = (historyState as? HistoryUiState.Ready)
-        ?.takeIf { it.result.from == range.from && it.result.to == range.to }
-
-    when {
-        ready != null -> {
-            item {
-                HistorySummary(
-                    curve = ready.result.curve,
-                    flows = ready.result.dailyFlows,
-                    categoryId = null,
-                    categoryPnl = ready.result.categoryPnl,
-                )
-            }
-            item {
-                AssetChartSection(
-                    curve = ready.result.curve,
-                    adjustedCurve = ready.result.adjustedCurve,
-                    flows = ready.result.dailyFlows,
-                    categoryId = null,
-                )
-            }
-        }
-
-        historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
-        historyState is HistoryUiState.Loading -> item { LoadingBlock(historyState.message) }
-        else -> item { LoadingBlock() }
-    }
-    item { CategoryTable(snapshot) }
-}
-
-private fun LazyListScope.categoryAssetsContent(
     historyState: HistoryUiState,
     range: DateRange,
     snapshot: PortfolioSnapshot,
     data: PortfolioData,
     quotes: QuoteSnapshot,
     positions: Map<PositionKey, BigDecimal>,
-    categoryId: String,
-    categoryName: String,
+    categoryId: String?,
+    categoryName: String?,
     onRetry: () -> Unit,
 ) {
     val ready = (historyState as? HistoryUiState.Ready)
@@ -632,34 +637,61 @@ private fun LazyListScope.categoryAssetsContent(
 
     when {
         ready != null -> {
-            val pnl = ready.result.categoryPnl.firstOrNull { it.categoryId == categoryId }
-                ?: CategoryPnl(categoryId, categoryName, null, true)
-            fun categoryStream(points: List<DailyPortfolioValue>) = points.map { point ->
-                DailyPortfolioValue(
-                    date = point.date,
-                    totalCny = point.categoryValues[categoryId],
-                    categoryValues = emptyMap(),
-                    incomplete = point.categoryValues[categoryId] == null && point.incomplete,
+            val pnlRows: List<CategoryPnl>
+            val curve: List<DailyPortfolioValue>
+            val adjusted: List<DailyPortfolioValue>
+            if (categoryId == null) {
+                pnlRows = ready.result.categoryPnl
+                curve = ready.result.curve
+                adjusted = ready.result.adjustedCurve
+            } else {
+                val pnl = ready.result.categoryPnl.firstOrNull { it.categoryId == categoryId }
+                    ?: CategoryPnl(categoryId, categoryName ?: categoryId, null, true)
+                fun categoryStream(points: List<DailyPortfolioValue>) = points.map { point ->
+                    DailyPortfolioValue(
+                        date = point.date,
+                        totalCny = point.categoryValues[categoryId],
+                        categoryValues = emptyMap(),
+                        incomplete = point.categoryValues[categoryId] == null && point.incomplete,
+                    )
+                }
+                pnlRows = listOf(pnl)
+                curve = categoryStream(ready.result.curve)
+                adjusted = categoryStream(ready.result.adjustedCurve)
+            }
+            item {
+                HistorySummary(
+                    curve = curve,
+                    flows = ready.result.dailyFlows,
+                    categoryId = categoryId,
+                    categoryPnl = pnlRows,
                 )
             }
-            val curve = categoryStream(ready.result.curve)
-            val adjusted = categoryStream(ready.result.adjustedCurve)
-            item { HistorySummary(curve, ready.result.dailyFlows, categoryId, listOf(pnl)) }
-            item { AssetChartSection(curve, adjusted, ready.result.dailyFlows, categoryId) }
+            item {
+                AssetChartSection(
+                    curve = curve,
+                    adjustedCurve = adjusted,
+                    flows = ready.result.dailyFlows,
+                    categoryId = categoryId,
+                )
+            }
         }
 
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
         historyState is HistoryUiState.Loading -> item { LoadingBlock(historyState.message) }
         else -> item { LoadingBlock() }
     }
-    item {
-        CategoryHoldingsBlock(
-            data = data,
-            quotes = quotes,
-            snapshot = snapshot,
-            positions = positions,
-            categoryId = categoryId,
-        )
+    item { CategoryTable(snapshot, onlyCategoryId = categoryId) }
+    if (categoryId != null) {
+        item {
+            CategoryHoldingsBlock(
+                data = data,
+                quotes = quotes,
+                snapshot = snapshot,
+                positions = positions,
+                categoryId = categoryId,
+            )
+        }
     }
 }
 

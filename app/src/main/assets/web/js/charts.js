@@ -6,8 +6,8 @@ const ChartsView = (() => {
   let historyView = { adjusted: false, markers: false };
 
   const TYPES = [
-    { key: 'assets', label: '总资产', kind: 'history' },
-    { key: 'category_assets', label: '类别资产', kind: 'history', category: true },
+    // 总资产页内置类别切换：未选类别时显示全组合，选中类别时只统计该类别。
+    { key: 'assets', label: '总资产', kind: 'history', category: true },
     { key: 'category_pnl', label: '类别盈亏', kind: 'history' },
     { key: 'flows', label: '投入取出', kind: 'flows' },
     { key: 'rebalance', label: '调仓统计', kind: 'rebalance' },
@@ -119,25 +119,29 @@ const ChartsView = (() => {
         toolbar.appendChild(rangeSeg);
       }
 
-      let categoryId = null;
+      let categoryId = '';
       if (current.category) {
         const categories = state.portfolio.settings.categories || [];
-        if (categories.length > 0) {
-          const select = el('select', 'select');
-          categories.forEach(function (category) {
-            const option = el('option', null, category.name);
-            option.value = category.id;
-            select.appendChild(option);
-          });
-          categoryId = state.charts.categoryId || categories[0].id;
-          select.value = categoryId;
-          select.addEventListener('change', function () {
-            state.charts.categoryId = select.value;
-            historyView = { adjusted: false, markers: false };
-            ChartsView.render(root, state);
-          });
-          toolbar.appendChild(select);
+        const select = el('select', 'select');
+        const total = el('option', null, '总资产');
+        total.value = '';
+        select.appendChild(total);
+        categories.forEach(function (category) {
+          const option = el('option', null, category.name);
+          option.value = category.id;
+          select.appendChild(option);
+        });
+        categoryId = state.charts.categoryId || '';
+        if (!categories.some(function (category) { return category.id === categoryId; })) {
+          categoryId = '';
         }
+        select.value = categoryId;
+        select.addEventListener('change', function () {
+          state.charts.categoryId = select.value;
+          historyView = { adjusted: false, markers: false };
+          ChartsView.render(root, state);
+        });
+        toolbar.appendChild(select);
       }
 
       controls.appendChild(toolbar);
@@ -173,7 +177,11 @@ const ChartsView = (() => {
         } else if (current.kind === 'dividends') {
           data = await Api.dividends(range.from, range.to);
         } else {
-          data = await Api.chart(current.key, range.from, range.to, categoryId);
+          // The assets view reuses the category_assets API when scoped to one category.
+          const apiType = current.key === 'assets' && categoryId
+            ? 'category_assets'
+            : current.key;
+          data = await Api.chart(apiType, range.from, range.to, categoryId || null);
         }
         if (seq !== requestSeq) return;
         clearNode(content);
@@ -188,7 +196,7 @@ const ChartsView = (() => {
     renderContent(content, state, current, data) {
       content.appendChild(el('h2', 'card-title', current.label));
 
-      if (current.key === 'assets' || current.key === 'category_assets') {
+      if (current.key === 'assets') {
         this.renderHistory(content, state, current, data);
         return;
       }
@@ -222,7 +230,7 @@ const ChartsView = (() => {
     },
 
     renderHistoryBody(body, state, current, data) {
-      const isCategory = current.key === 'category_assets';
+      const isCategory = !!data.category;
       const summary = data.summary || {};
       const rows = [];
       rows.push({ label: '期初', value: cnyOrDash(summary.startValue) });

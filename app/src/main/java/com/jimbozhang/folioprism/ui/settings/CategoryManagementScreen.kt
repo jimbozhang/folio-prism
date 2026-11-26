@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -26,13 +27,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.jimbozhang.folioprism.domain.model.Category
+import com.jimbozhang.folioprism.domain.model.CategoryNames
 import com.jimbozhang.folioprism.domain.model.PortfolioData
+import com.jimbozhang.folioprism.domain.model.SATELLITE_RULE
 import com.jimbozhang.folioprism.ui.components.FormDivider
 import com.jimbozhang.folioprism.ui.components.FormRow
 import com.jimbozhang.folioprism.ui.components.InlineNumberField
 import com.jimbozhang.folioprism.ui.theme.FolioBackground
 import com.jimbozhang.folioprism.ui.theme.FolioDivider
 import com.jimbozhang.folioprism.ui.theme.FolioGold
+import com.jimbozhang.folioprism.ui.theme.FolioInk
 import com.jimbozhang.folioprism.ui.theme.FolioMuted
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -47,6 +51,8 @@ internal fun CategoryManagementScreen(
     val categories = remember(data.settings.categories) {
         data.settings.categories.sortedBy { it.order }
     }
+    val strategyCategories = categories.filterNot { it.specialRule == SATELLITE_RULE }
+    val satelliteCategories = categories.filter { it.specialRule == SATELLITE_RULE }
 
     Column(
         modifier = Modifier
@@ -65,22 +71,44 @@ internal fun CategoryManagementScreen(
                     Spacer(modifier = Modifier.height(10.dp))
                     ManagementGroupHeader(
                         title = "再平衡目标",
-                        count = categories.size,
+                        count = strategyCategories.size,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     ManagementListCard {
-                        categories.forEachIndexed { index, category ->
+                        strategyCategories.forEachIndexed { index, category ->
                             if (index > 0) {
                                 HorizontalDivider(color = FolioDivider)
                             }
                             ManagementRow(
                                 icon = categoryIcon(category.id),
                                 accent = categoryColor(category.color),
-                                title = category.name,
+                                title = CategoryNames.builtIn(category),
                                 subtitle = "目标 ${pct(category.targetPct)}" +
                                     " · 区间 ${pct(category.minPct)} – ${pct(category.maxPct)}",
                                 onClick = { editing = category },
                             )
+                        }
+                    }
+                    if (satelliteCategories.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        ManagementGroupHeader(
+                            title = "卫星资产",
+                            count = satelliteCategories.size,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        ManagementListCard {
+                            satelliteCategories.forEachIndexed { index, category ->
+                                if (index > 0) {
+                                    HorizontalDivider(color = FolioDivider)
+                                }
+                                ManagementRow(
+                                    icon = categoryIcon(category.id),
+                                    accent = categoryColor(category.color),
+                                    title = CategoryNames.builtIn(category),
+                                    subtitle = "计入总资产 · 不参与再平衡 · 名称内置",
+                                    onClick = null,
+                                )
+                            }
                         }
                     }
                 }
@@ -114,7 +142,6 @@ private fun CategoryFormDialog(
     onDismiss: () -> Unit,
     onSave: (Category) -> String?,
 ) {
-    var name by remember(initial.id) { mutableStateOf(initial.name) }
     var target by remember(initial.id) { mutableStateOf(initial.targetPct.toPlainString()) }
     var min by remember(initial.id) { mutableStateOf(initial.minPct.toPlainString()) }
     var max by remember(initial.id) { mutableStateOf(initial.maxPct.toPlainString()) }
@@ -129,13 +156,11 @@ private fun CategoryFormDialog(
             val minValue = min.toBigDecimalOrNull()
             val maxValue = max.toBigDecimalOrNull()
             when {
-                name.isBlank() -> "请输入类别名称"
                 targetValue == null || minValue == null || maxValue == null ->
                     "请输入有效的百分比"
                 minValue > maxValue -> "最低不能大于最高"
                 else -> onSave(
                     initial.copy(
-                        name = name.trim(),
                         targetPct = targetValue,
                         minPct = minValue,
                         maxPct = maxValue,
@@ -145,12 +170,30 @@ private fun CategoryFormDialog(
         },
         onDelete = null,
     ) {
-        ManagementNameInput(
-            label = "类别名称",
-            value = name,
-            onValueChange = { name = it },
-            placeholder = "请输入类别名称",
-        )
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+                Text(
+                    text = "类别名称",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = FolioMuted,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = CategoryNames.builtIn(initial),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = FolioInk,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "名称内置，不可修改",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioMuted,
+                )
+            }
+        }
         Spacer(modifier = Modifier.height(8.dp))
         ManagementFormSection {
             FormRow(

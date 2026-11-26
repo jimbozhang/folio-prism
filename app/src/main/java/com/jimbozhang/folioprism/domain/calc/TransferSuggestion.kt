@@ -3,6 +3,7 @@ package com.jimbozhang.folioprism.domain.calc
 import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
+import com.jimbozhang.folioprism.domain.model.SATELLITE_RULE
 import com.jimbozhang.folioprism.domain.model.categoryOf
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
@@ -90,6 +91,12 @@ object TransferSuggestion {
         val fromInstrument = data.instrument(fromInstrumentId ?: return null) ?: return null
         val fromCategory = data.categoryOf(fromInstrument.id) ?: return null
         val toCategory = toInstrumentId?.let { data.categoryOf(it) }
+        // Satellite assets take no part in the rebalancing strategy.
+        if (fromCategory.specialRule == SATELLITE_RULE ||
+            toCategory?.specialRule == SATELLITE_RULE
+        ) {
+            return null
+        }
 
         // The source must be valued before the zero shortcut below: without a
         // price its category value is unknown, not zero.
@@ -102,8 +109,8 @@ object TransferSuggestion {
         if (holdingValue.signum() <= 0) return null
 
         val snapshot = SnapshotCalculator.build(data, positions, provider, date)
-        val totalValue = snapshot.totalValueCny
-        val portfolioValue = snapshot.portfolioValueCny
+        val totalValue = snapshot.strategyValueCny
+        val portfolioValue = snapshot.strategyPortfolioValueCny
         val sourceValue = snapshot.categories
             .firstOrNull { it.category.id == fromCategory.id }
             ?.valueCny ?: BigDecimal.ZERO
@@ -158,6 +165,12 @@ object TransferSuggestion {
         val fromCategory = data.categoryOf(fromInstrument.id) ?: return null
         val toInstrument = data.instrument(toInstrumentId ?: return null) ?: return null
         val toCategory = data.categoryOf(toInstrument.id) ?: return null
+        // Satellite assets take no part in the rebalancing strategy.
+        if (fromCategory.specialRule == SATELLITE_RULE ||
+            toCategory.specialRule == SATELLITE_RULE
+        ) {
+            return null
+        }
         // Moving value inside one category does not change its share.
         if (fromCategory.id == toCategory.id) return null
 
@@ -171,8 +184,8 @@ object TransferSuggestion {
         if (holdingValue.signum() <= 0) return null
 
         val snapshot = SnapshotCalculator.build(data, positions, provider, date)
-        val totalValue = snapshot.totalValueCny
-        val portfolioValue = snapshot.portfolioValueCny
+        val totalValue = snapshot.strategyValueCny
+        val portfolioValue = snapshot.strategyPortfolioValueCny
         val toValue = snapshot.categories
             .firstOrNull { it.category.id == toCategory.id }
             ?.valueCny ?: BigDecimal.ZERO

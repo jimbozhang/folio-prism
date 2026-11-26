@@ -59,6 +59,7 @@ import android.view.WindowManager
 import com.jimbozhang.folioprism.data.price.LivePriceProvider
 import com.jimbozhang.folioprism.domain.calc.EventReplay
 import com.jimbozhang.folioprism.domain.calc.EventValues
+import com.jimbozhang.folioprism.domain.calc.TransferPricing
 import com.jimbozhang.folioprism.domain.calc.TransferSuggestion
 import com.jimbozhang.folioprism.domain.calc.Valuation
 import com.jimbozhang.folioprism.domain.calc.localDate
@@ -140,11 +141,15 @@ internal class EventForm(
     var fromInstrumentId by mutableStateOf<String?>(null)
     var fromQuantity by mutableStateOf("")
     var fromPrice by mutableStateOf("")
+    /** True when [fromPrice] is typed in CNY instead of the instrument currency. */
+    var fromPriceInCny by mutableStateOf(false)
 
     var toInstitutionId by mutableStateOf<String?>(null)
     var toInstrumentId by mutableStateOf<String?>(null)
     var toQuantity by mutableStateOf("")
     var toPrice by mutableStateOf("")
+    /** True when [toPrice] is typed in CNY instead of the instrument currency. */
+    var toPriceInCny by mutableStateOf(false)
     /** Last value this form suggested for [toQuantity]; user input wins. */
     var lastSuggestedToQuantity by mutableStateOf<String?>(null)
     /** Last derived value written to [fromPrice]; user input wins. */
@@ -286,7 +291,7 @@ fun EventEditorDialog(
                 current = form.fromPrice,
                 lastSuggested = form.lastSuggestedFromPrice,
                 instrumentChanged = false,
-                suggested = TransferSuggestion.suggestPrice(quotes, from),
+                suggested = suggestedPriceText(quotes, from, form.fromPriceInCny),
             )
             form.fromPrice = applied.value
             form.lastSuggestedFromPrice = applied.lastSuggested
@@ -297,7 +302,7 @@ fun EventEditorDialog(
                 current = form.toPrice,
                 lastSuggested = form.lastSuggestedToPrice,
                 instrumentChanged = false,
-                suggested = TransferSuggestion.suggestPrice(quotes, to),
+                suggested = suggestedPriceText(quotes, to, form.toPriceInCny),
             )
             form.toPrice = applied.value
             form.lastSuggestedToPrice = applied.lastSuggested
@@ -638,14 +643,16 @@ private fun pickerConfig(
             val instrumentChanged = instrumentId != form.fromInstrumentId
             form.fromInstitutionId = institutionId
             form.fromInstrumentId = instrumentId
+            if (instrumentChanged) form.fromPriceInCny = false
             when {
                 instrument?.kind != InstrumentKind.QUOTED -> {
                     form.fromPrice = ""
+                    form.fromPriceInCny = false
                     form.lastSuggestedFromPrice = null
                 }
 
                 else -> {
-                    val suggested = TransferSuggestion.suggestPrice(quotes, instrument)
+                    val suggested = suggestedPriceText(quotes, instrument, form.fromPriceInCny)
                     // A different instrument always takes its own quote; for
                     // the same instrument, the derived price only replaces a
                     // blank field or one that still holds our previous
@@ -677,14 +684,16 @@ private fun pickerConfig(
             val instrumentChanged = instrumentId != form.toInstrumentId
             form.toInstitutionId = institutionId
             form.toInstrumentId = instrumentId
+            if (instrumentChanged) form.toPriceInCny = false
             when {
                 instrument?.kind != InstrumentKind.QUOTED -> {
                     form.toPrice = ""
+                    form.toPriceInCny = false
                     form.lastSuggestedToPrice = null
                 }
 
                 else -> {
-                    val suggested = TransferSuggestion.suggestPrice(quotes, instrument)
+                    val suggested = suggestedPriceText(quotes, instrument, form.toPriceInCny)
                     // See TRANSFER_FROM: only a different instrument (or a
                     // blank field, or our own previous suggestion) takes the
                     // derived price; user input wins.
@@ -799,8 +808,24 @@ internal fun buildEvents(
             }
             val fromQuantity = positive(form.fromQuantity, "转出数量")
             val toQuantity = positive(form.toQuantity, "转入数量")
-            val fromPrice = priceFor(fromInstrument, form.fromPrice)
-            val toPrice = priceFor(toInstrument, form.toPrice)
+            val fromEnteredPrice = if (fromInstrument.kind == InstrumentKind.QUOTED) {
+                positive(form.fromPrice, "${fromInstrument.code} 单价")
+            } else {
+                null
+            }
+            val toEnteredPrice = if (toInstrument.kind == InstrumentKind.QUOTED) {
+                positive(form.toPrice, "${toInstrument.code} 单价")
+            } else {
+                null
+            }
+            val fromPrice = fromEnteredPrice?.let {
+                TransferPricing.nativePrice(it, form.fromPriceInCny, fromInstrument, quotes.fxRates)
+                    ?: error("缺少 ${fromInstrument.currency} 当前汇率，请刷新行情")
+            }
+            val toPrice = toEnteredPrice?.let {
+                TransferPricing.nativePrice(it, form.toPriceInCny, toInstrument, quotes.fxRates)
+                    ?: error("缺少 ${toInstrument.currency} 当前汇率，请刷新行情")
+            }
             val values = EventValues.transferValues(
                 fromQuantity = fromQuantity,
                 toQuantity = toQuantity,
@@ -815,7 +840,29 @@ internal fun buildEvents(
             val autoLoss = if (sameCurrency) {
                 values.fromNative.subtract(values.toNative).toMoneyAmount()
             } else {
-                BigDecimal.ZERO
+                val fromCny = TransferPricing.exactCnyValue(
+                    instrument = fromInstrument,
+                    quantity = fromQuantity,
+                    nativePrice = fromPrice,
+                    enteredPrice = fromEnteredPrice,
+                    inCny = form.fromPriceInCny,
+                )
+                val toCny = TransferPricing.exactCnyValue(
+                    instrument = toInstrument,
+                    quantity = toQuantity,
+                    nativePrice = toPrice,
+                    enteredPrice = toEnteredPrice,
+                    inCny = form.toPriceInCny,
+                )
+                if (fromCny != null && toCny != null) {
+                    TransferPricing.lossInCurrency(
+                        lossCny = fromCny.subtract(toCny),
+                        lossCurrency = lossCurrency,
+                        fxRates = quotes.fxRates,
+                    ) ?: BigDecimal.ZERO
+                } else {
+                    BigDecimal.ZERO
+                }
             }
             val totalLoss = if (form.feeLoss.isBlank()) {
                 autoLoss
@@ -1049,12 +1096,20 @@ private fun nonNegative(text: String, label: String): BigDecimal =
             ?: error("请输入有效的$label")
     }
 
-private fun priceFor(instrument: Instrument, text: String): BigDecimal? =
-    if (instrument.kind == InstrumentKind.QUOTED) {
-        positive(text, "${instrument.code} 单价")
-    } else {
-        null
-    }
+/**
+ * A live quote rendered in the price field's entry currency: native by
+ * default, or CNY when the user switched that leg's price to CNY.
+ */
+private fun suggestedPriceText(
+    quotes: QuoteSnapshot,
+    instrument: Instrument,
+    inCny: Boolean,
+): String? {
+    val native = TransferSuggestion.suggestPrice(quotes, instrument)?.toBigDecimalOrNull()
+        ?: return null
+    return TransferPricing.enteredPrice(native, inCny, instrument, quotes.fxRates)
+        ?.toPlainString()
+}
 
 internal fun currentFx(currency: String, quotes: QuoteSnapshot): BigDecimal =
     when (currency.uppercase()) {
@@ -1141,18 +1196,21 @@ internal fun swapTransferSides(form: EventForm) {
     val fromInstId = form.fromInstitutionId
     val fromQty = form.fromQuantity
     val fromPx = form.fromPrice
+    val fromInCny = form.fromPriceInCny
     val fromLastPx = form.lastSuggestedFromPrice
 
     form.fromInstrumentId = form.toInstrumentId
     form.fromInstitutionId = form.toInstitutionId
     form.fromQuantity = form.toQuantity
     form.fromPrice = form.toPrice
+    form.fromPriceInCny = form.toPriceInCny
     form.lastSuggestedFromPrice = form.lastSuggestedToPrice
 
     form.toInstrumentId = fromInst
     form.toInstitutionId = fromInstId
     form.toQuantity = fromQty
     form.toPrice = fromPx
+    form.toPriceInCny = fromInCny
     form.lastSuggestedToPrice = fromLastPx
     form.lastSuggestedToQuantity = null
 }

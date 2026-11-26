@@ -121,6 +121,9 @@ data class OverviewDto(
     val dividendShare: String,
     val portfolioValueCny: String,
     val portfolioShare: String,
+    /** Sum of satellite categories; omitted when the data has none. */
+    val satelliteValueCny: String? = null,
+    val satelliteShare: String? = null,
     val hasMissingPrices: Boolean,
     val categories: List<CategoryViewDto>,
     val positions: List<PositionViewDto>,

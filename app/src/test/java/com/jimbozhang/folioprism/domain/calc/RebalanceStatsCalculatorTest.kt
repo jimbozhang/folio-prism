@@ -7,6 +7,7 @@ import com.jimbozhang.folioprism.domain.INST_A
 import com.jimbozhang.folioprism.domain.INST_B
 import com.jimbozhang.folioprism.domain.assertDecimal
 import com.jimbozhang.folioprism.domain.cashInstrument
+import com.jimbozhang.folioprism.domain.model.Category
 import com.jimbozhang.folioprism.domain.model.CategoryIds
 import com.jimbozhang.folioprism.domain.model.Event
 import com.jimbozhang.folioprism.domain.money.bd
@@ -288,5 +289,45 @@ class RebalanceStatsCalculatorTest {
         assertDecimal("300", growth.inCny)
         assertEquals(2, growth.inCount)
         assertTrue(growth.outCount == 0)
+    }
+
+    @Test
+    fun satelliteTransfersAreNotRebalanceActivity() {
+        val hk = quotedInstrument("ins_hk", "cat_satellite", currency = "HKD", code = "01810")
+        val base = data(
+            listOf(
+                transfer(
+                    from = ref(INST_A, CASH_CNY),
+                    to = ref(INST_A, "ins_hk"),
+                    fromQuantity = "100",
+                    toQuantity = "10",
+                    toPrice = "10",
+                    date = "2026-01-05T00:00:00+08:00",
+                ),
+            ),
+        )
+        val withSatellite = base.copy(
+            instruments = base.instruments + hk,
+            settings = base.settings.copy(
+                categories = base.settings.categories + Category(
+                    id = "cat_satellite",
+                    name = "卫星",
+                    order = 9,
+                    color = "#123456",
+                    targetPct = bd("0"),
+                    minPct = bd("0"),
+                    maxPct = bd("0"),
+                    specialRule = "satellite",
+                ),
+            ),
+        )
+
+        val stats = RebalanceStatsCalculator.calculate(withSatellite, emptyMap(), from, to)
+
+        assertEquals(0, stats.count)
+        assertEquals(0, stats.dayCount)
+        assertDecimal("0", stats.amountCny)
+        assertEquals(0, stats.categoryFlows.size)
+        assertEquals(0, stats.months.first().cashToAsset)
     }
 }

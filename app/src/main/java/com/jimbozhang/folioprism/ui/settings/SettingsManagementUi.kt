@@ -164,12 +164,19 @@ internal fun ManagementRow(
     accent: Color,
     title: String,
     subtitle: String,
-    onClick: () -> Unit,
+    /** Null makes the row read-only: no click, no chevron. */
+    onClick: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(onClick = onClick)
+                } else {
+                    Modifier
+                },
+            )
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -205,13 +212,15 @@ internal fun ManagementRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(modifier = Modifier.width(8.dp))
-        Icon(
-            imageVector = Icons.Outlined.ChevronRight,
-            contentDescription = null,
-            tint = FolioMuted,
-            modifier = Modifier.size(18.dp),
-        )
+        if (onClick != null) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(
+                imageVector = Icons.Outlined.ChevronRight,
+                contentDescription = null,
+                tint = FolioMuted,
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }
 

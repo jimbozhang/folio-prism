@@ -8,4 +8,6 @@ object CategoryIds {
     const val CN_BOND = "cat_cn_bond"
     const val GOLD = "cat_gold"
     const val CASH = "cat_cash"
+    /** Id used when the app creates the built-in satellite category on demand. */
+    const val SATELLITE = "cat_satellite"
 }

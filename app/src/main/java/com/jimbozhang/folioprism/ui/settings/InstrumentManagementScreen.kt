@@ -34,13 +34,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.jimbozhang.folioprism.domain.model.Category
+import com.jimbozhang.folioprism.domain.model.CategoryIds
+import com.jimbozhang.folioprism.domain.model.CategoryNames
 import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.Precision
 import com.jimbozhang.folioprism.domain.model.QuoteConfig
 import com.jimbozhang.folioprism.domain.model.QuoteMode
+import com.jimbozhang.folioprism.domain.model.SATELLITE_RULE
 import com.jimbozhang.folioprism.domain.model.eventsReferencingInstrument
+import com.jimbozhang.folioprism.domain.model.withSatelliteCategory
 import com.jimbozhang.folioprism.ui.components.FormDivider
 import com.jimbozhang.folioprism.ui.components.FormRow
 import com.jimbozhang.folioprism.ui.components.InlineDropdown
@@ -157,14 +161,21 @@ internal fun InstrumentManagementScreen(
             },
             onSave = { instrument ->
                 onUpdateData { current ->
-                    val exists = current.instruments.any { it.id == instrument.id }
-                    current.copy(
+                    // Picking the built-in satellite option creates the
+                    // category on first use, so no JSON editing is needed.
+                    val withCategory = if (instrument.categoryId == CategoryIds.SATELLITE) {
+                        current.withSatelliteCategory()
+                    } else {
+                        current
+                    }
+                    val exists = withCategory.instruments.any { it.id == instrument.id }
+                    withCategory.copy(
                         instruments = if (exists) {
-                            current.instruments.map {
+                            withCategory.instruments.map {
                                 if (it.id == instrument.id) instrument else it
                             }
                         } else {
-                            current.instruments + instrument
+                            withCategory.instruments + instrument
                         },
                     )
                 }
@@ -238,6 +249,17 @@ private fun InstrumentFormDialog(
     val showNameLookup = initial == null &&
         kind == InstrumentKind.QUOTED &&
         quoteMode != QuoteMode.MANUAL
+
+    // The satellite class is built in: offer it even before it has been
+    // written to settings.categories; saving creates the category.
+    val categoryOptions = remember(categories) {
+        val list = categories.sortedBy { it.order }
+            .map { category -> category.id to CategoryNames.builtIn(category) }
+        val configured = categories.any {
+            it.specialRule == SATELLITE_RULE || it.id == CategoryIds.SATELLITE
+        }
+        if (configured) list else list + (CategoryIds.SATELLITE to CategoryNames.SATELLITE)
+    }
 
     ManagementFormDialog(
         title = if (initial == null) "新增标的" else "编辑标的",
@@ -386,7 +408,7 @@ private fun InstrumentFormDialog(
             ) {
                 InlineDropdown(
                     selectedId = categoryId,
-                    options = categories.sortedBy { it.order }.map { it.id to it.name },
+                    options = categoryOptions,
                     onSelected = { categoryId = it },
                 )
             }
@@ -444,6 +466,12 @@ private fun InstrumentFormDialog(
                     iconTint = FolioGold,
                     label = "手工价格",
                 ) {
+                    Text(
+                        text = currency,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
                     InlineNumberField(
                         value = manualPrice,
                         onValueChange = { manualPrice = it },

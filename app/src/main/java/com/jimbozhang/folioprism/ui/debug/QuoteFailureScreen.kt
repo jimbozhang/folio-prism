@@ -132,6 +132,8 @@ fun QuoteFailureScreen(
     manualTarget?.let { target ->
         ManualPriceDialog(
             failure = target,
+            currency = target.instrumentId
+                ?.let { id -> data.instruments.firstOrNull { it.id == id }?.currency },
             onDismiss = { manualTarget = null },
             onConfirm = { price ->
                 target.instrumentId?.let { onSetManualPrice(it, price) }
@@ -194,6 +196,7 @@ private fun FailureCard(
 @Composable
 private fun ManualPriceDialog(
     failure: QuoteFailure,
+    currency: String?,
     onDismiss: () -> Unit,
     onConfirm: (BigDecimal) -> Unit,
 ) {
@@ -215,7 +218,7 @@ private fun ManualPriceDialog(
                         text = it
                         error = null
                     },
-                    label = { Text("价格") },
+                    label = { Text(currency?.let { "价格（$it）" } ?: "价格") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     isError = error != null,
                     singleLine = true,

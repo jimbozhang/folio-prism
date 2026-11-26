@@ -11,6 +11,7 @@ import com.jimbozhang.folioprism.domain.model.ExpenseEvent
 import com.jimbozhang.folioprism.domain.model.Institution
 import com.jimbozhang.folioprism.domain.model.PositionRef
 import com.jimbozhang.folioprism.domain.model.TransferEvent
+import com.jimbozhang.folioprism.domain.money.bd
 import com.jimbozhang.folioprism.domain.portfolio
 import com.jimbozhang.folioprism.domain.quotedInstrument
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
@@ -145,5 +146,59 @@ class TransferFeeTest {
         val transfer = events.single() as TransferEvent
         assertDecimal("0", transfer.lossAmount)
         assertTrue(events.none { it is ExpenseEvent })
+    }
+
+    private val hkStock = "ins_hk"
+
+    private fun hkData() = portfolio(
+        institutions = listOf(Institution(INST_A, "A")),
+        instruments = listOf(
+            cashInstrument(CASH_CNY, "CNY"),
+            quotedInstrument(hkStock, CategoryIds.GROWTH, currency = "HKD", code = "01810"),
+        ),
+    )
+
+    private fun hkQuotes() = QuoteSnapshot(fxRates = mapOf("HKD" to bd("0.9")))
+
+    private fun cnyPriceForm(feeLoss: String = ""): EventForm =
+        EventForm(null, hkData()).apply {
+            type = "transfer"
+            date = "2026-01-01 10:00"
+            fromInstitutionId = INST_A
+            fromInstrumentId = CASH_CNY
+            fromQuantity = "910"
+            toInstitutionId = INST_A
+            toInstrumentId = hkStock
+            toQuantity = "10"
+            toPrice = "90"
+            toPriceInCny = true
+            this.feeLoss = feeLoss
+        }
+
+    @Test
+    fun cnyPriceEntryConvertsToNativeAndDerivesExactLoss() {
+        val transfer = buildEvents(hkData(), hkQuotes(), cnyPriceForm(), null)
+            .getOrThrow().single() as TransferEvent
+
+        // 90 CNY per share / 0.9 = 100 HKD, stored native.
+        assertDecimal("100", transfer.toPrice)
+        // 910 CNY paid - 10 * 90 CNY = 10 CNY loss, exact at entry.
+        assertDecimal("10", transfer.lossAmount)
+        assertEquals("CNY", transfer.lossCurrency)
+    }
+
+    @Test
+    fun nativePriceEntryKeepsCrossCurrencyLossManual() {
+        val form = cnyPriceForm().apply {
+            toPriceInCny = false
+            toPrice = "100"
+        }
+        val transfer = buildEvents(hkData(), hkQuotes(), form, null)
+            .getOrThrow().single() as TransferEvent
+
+        assertDecimal("100", transfer.toPrice)
+        // No exact CNY leg: today's FX would distort a historical trade, so
+        // the loss stays manual/zero.
+        assertDecimal("0", transfer.lossAmount)
     }
 }

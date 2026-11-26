@@ -18,6 +18,18 @@ const LedgerView = (() => {
     return (data.instruments || []).find(function (item) { return item.id === id; });
   }
 
+  function isCny(currency) {
+    const upper = String(currency || '').toUpperCase();
+    return upper === 'CNY' || upper === 'CNH';
+  }
+
+  function priceCurrencyOptions(instrument) {
+    return [
+      { value: 'native', label: instrument.currency || 'CNY' },
+      { value: 'CNY', label: 'CNY' },
+    ];
+  }
+
   function institutionOf(data, id) {
     return (data.institutions || []).find(function (item) { return item.id === id; });
   }
@@ -441,10 +453,12 @@ const LedgerView = (() => {
       fromInstrumentId: null,
       fromQuantity: '',
       fromPrice: '',
+      fromPriceInCny: false,
       toInstitutionId: null,
       toInstrumentId: null,
       toQuantity: '',
       toPrice: '',
+      toPriceInCny: false,
       feeLoss: '',
       feeFromCash: false,
       feeInstitutionId: null,
@@ -711,6 +725,16 @@ const LedgerView = (() => {
       if (fromInstrument && fromInstrument.kind === 'quoted') {
         body.appendChild(field('转出单价',
           textInput(draft.fromPrice, function (value) { draft.fromPrice = value; })));
+        if (!isCny(fromInstrument.currency)) {
+          body.appendChild(field('转出单价币种',
+            selector(priceCurrencyOptions(fromInstrument),
+              draft.fromPriceInCny ? 'CNY' : 'native',
+              function (value) {
+                draft.fromPriceInCny = value === 'CNY';
+                draft.fromPrice = '';
+                rerender();
+              })));
+        }
       }
 
       body.appendChild(el('div', 'section-label', '转入'));
@@ -721,6 +745,16 @@ const LedgerView = (() => {
       if (toInstrument && toInstrument.kind === 'quoted') {
         body.appendChild(field('转入单价',
           textInput(draft.toPrice, function (value) { draft.toPrice = value; })));
+        if (!isCny(toInstrument.currency)) {
+          body.appendChild(field('转入单价币种',
+            selector(priceCurrencyOptions(toInstrument),
+              draft.toPriceInCny ? 'CNY' : 'native',
+              function (value) {
+                draft.toPriceInCny = value === 'CNY';
+                draft.toPrice = '';
+                rerender();
+              })));
+        }
       }
 
       body.appendChild(el('div', 'section-label', '手续费 / 损耗'));

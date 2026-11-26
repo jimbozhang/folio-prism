@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jimbozhang.folioprism.data.price.LivePriceProvider
 import com.jimbozhang.folioprism.domain.calc.PositionKey
+import com.jimbozhang.folioprism.domain.calc.TransferPricing
 import com.jimbozhang.folioprism.domain.calc.TransferSuggestion
 import com.jimbozhang.folioprism.domain.calc.Valuation
 import com.jimbozhang.folioprism.domain.model.Instrument
@@ -85,9 +86,22 @@ internal fun TransferSection(
 ) {
     val fromInstrument = form.fromInstrumentId?.let { data.instrument(it) }
     val toInstrument = form.toInstrumentId?.let { data.instrument(it) }
-    val fromValue = nativeLegValue(form.fromQuantity, form.fromPrice, fromInstrument)
-    val toValue = nativeLegValue(form.toQuantity, form.toPrice, toInstrument)
+    val fromValue = nativeLegValue(
+        form.fromQuantity,
+        form.fromPrice,
+        form.fromPriceInCny,
+        fromInstrument,
+        quotes,
+    )
+    val toValue = nativeLegValue(
+        form.toQuantity,
+        form.toPrice,
+        form.toPriceInCny,
+        toInstrument,
+        quotes,
+    )
     val lossCurrency = fromInstrument?.currency ?: "CNY"
+    val autoLoss = autoLossNative(form, fromInstrument, toInstrument, fromValue, toValue, quotes)
 
     val fromKey = if (form.fromInstitutionId != null && form.fromInstrumentId != null) {
         PositionKey(form.fromInstitutionId!!, form.fromInstrumentId!!)
@@ -117,9 +131,19 @@ internal fun TransferSection(
         quotes = quotes,
         fromInstrumentId = form.fromInstrumentId,
         fromQuantity = fromQuantityValue,
-        fromPrice = form.fromPrice.toBigDecimalOrNull(),
+        fromPrice = nativePriceOrNull(
+            form.fromPrice,
+            form.fromPriceInCny,
+            fromInstrument,
+            quotes,
+        ),
         toInstrumentId = form.toInstrumentId,
-        toPrice = form.toPrice.toBigDecimalOrNull(),
+        toPrice = nativePriceOrNull(
+            form.toPrice,
+            form.toPriceInCny,
+            toInstrument,
+            quotes,
+        ),
     )
     // Receive-side rebalancing: move enough value in to bring the destination
     // category to its target share, filling both sides of the transfer.
@@ -270,10 +294,11 @@ internal fun TransferSection(
             feeLossText = form.feeLoss,
             feeFromCash = form.feeFromCash,
             lossCurrency = lossCurrency,
+            autoLoss = autoLoss,
             quotes = quotes,
         )
     }
-    PriceSection(data, form, fromInstrument, toInstrument, positions, onPick)
+    PriceSection(data, quotes, form, fromInstrument, toInstrument, positions, autoLoss, onPick)
 }
 
 @Composable
@@ -354,10 +379,11 @@ private fun TransferSummary(
     feeLossText: String,
     feeFromCash: Boolean,
     lossCurrency: String,
+    autoLoss: BigDecimal?,
     quotes: QuoteSnapshot,
 ) {
-    val crossCurrency = !fromInstrument.currency.equals(toInstrument.currency, true)
-    val embedded = if (crossCurrency) BigDecimal.ZERO else fromValue.subtract(toValue)
+    val crossCurrency = !sameCurrency(fromInstrument, toInstrument)
+    val embedded = autoLoss ?: BigDecimal.ZERO
     val feeLoss = feeLossText.toBigDecimalOrNull() ?: embedded
     val cashFee = if (feeFromCash) feeLoss.subtract(embedded) else null
     val cashSuffix = if (cashFee != null) {
@@ -514,30 +540,67 @@ private fun SwapButton(onClick: () -> Unit) {
 @Composable
 private fun PriceSection(
     data: PortfolioData,
+    quotes: QuoteSnapshot,
     form: EventForm,
     fromInstrument: Instrument?,
     toInstrument: Instrument?,
     positions: Map<PositionKey, BigDecimal>,
+    autoLoss: BigDecimal?,
     onPick: (PickerTarget) -> Unit,
 ) {
     val lossCurrency = fromInstrument?.currency ?: "CNY"
     val crossCurrency = fromInstrument != null && toInstrument != null &&
-        !fromInstrument.currency.equals(toInstrument.currency, true)
-    val fromValue = nativeLegValue(form.fromQuantity, form.fromPrice, fromInstrument)
-    val toValue = nativeLegValue(form.toQuantity, form.toPrice, toInstrument)
-    val autoLoss = if (fromValue != null && toValue != null && !crossCurrency) {
-        fromValue.subtract(toValue)
-    } else {
-        null
-    }
+        !sameCurrency(fromInstrument, toInstrument)
     Column {
         if (fromInstrument?.kind == InstrumentKind.QUOTED) {
             FormDivider()
-            PriceRow("转出单价", form.fromPrice, { form.fromPrice = it }, fromInstrument.currency)
+            PriceRow(
+                label = "转出单价",
+                value = form.fromPrice,
+                onValueChange = { form.fromPrice = it },
+                currency = fromInstrument.currency,
+                inCny = form.fromPriceInCny,
+                nativePreview = priceNativePreview(
+                    form.fromPrice,
+                    form.fromPriceInCny,
+                    fromInstrument,
+                    quotes,
+                ),
+                onToggleCny = { toCny ->
+                    togglePriceCurrency(
+                        fromLeg = true,
+                        toCny = toCny,
+                        form = form,
+                        instrument = fromInstrument,
+                        quotes = quotes,
+                    )
+                },
+            )
         }
         if (toInstrument?.kind == InstrumentKind.QUOTED) {
             FormDivider()
-            PriceRow("转入单价", form.toPrice, { form.toPrice = it }, toInstrument.currency)
+            PriceRow(
+                label = "转入单价",
+                value = form.toPrice,
+                onValueChange = { form.toPrice = it },
+                currency = toInstrument.currency,
+                inCny = form.toPriceInCny,
+                nativePreview = priceNativePreview(
+                    form.toPrice,
+                    form.toPriceInCny,
+                    toInstrument,
+                    quotes,
+                ),
+                onToggleCny = { toCny ->
+                    togglePriceCurrency(
+                        fromLeg = false,
+                        toCny = toCny,
+                        form = form,
+                        instrument = toInstrument,
+                        quotes = quotes,
+                    )
+                },
+            )
         }
         FormDivider()
         FormRow(
@@ -549,9 +612,9 @@ private fun PriceSection(
             Text(
                 text = when {
                     form.feeLoss.isNotBlank() -> lossCurrency
-                    crossCurrency -> lossCurrency + " · 跨币种不自动计算"
                     autoLoss != null ->
                         lossCurrency + " · 自动 " + formatNative(autoLoss, lossCurrency)
+                    crossCurrency -> lossCurrency + " · 跨币种不自动计算"
                     else -> lossCurrency
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -966,37 +1029,169 @@ private fun PriceRow(
     value: String,
     onValueChange: (String) -> Unit,
     currency: String,
+    inCny: Boolean,
+    nativePreview: BigDecimal?,
+    onToggleCny: (Boolean) -> Unit,
 ) {
-    FormRow(
-        icon = Icons.Outlined.Tune,
-        iconTint = FolioGold,
-        label = label,
-    ) {
-        Text(
-            text = currency,
-            style = MaterialTheme.typography.bodySmall,
-            color = FolioMuted,
-            modifier = Modifier.weight(1f),
-        )
-        InlineNumberField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.width(120.dp),
-        )
+    Column {
+        FormRow(
+            icon = Icons.Outlined.Tune,
+            iconTint = FolioGold,
+            label = label,
+        ) {
+            if (TransferPricing.isCny(currency)) {
+                Text(
+                    text = currency,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioMuted,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                InlineDropdown(
+                    selectedId = if (inCny) "CNY" else currency,
+                    options = listOf(currency to currency, "CNY" to "CNY"),
+                    onSelected = { id -> onToggleCny(id == "CNY") },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            InlineNumberField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.width(120.dp),
+            )
+        }
+        if (inCny) {
+            Text(
+                text = if (nativePreview != null) {
+                    "折合 " + formatNative(nativePreview, currency)
+                } else {
+                    "缺少 $currency 汇率，无法换算"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (nativePreview != null) FolioMuted else FolioCoral,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 1.dp),
+            )
+        }
     }
+}
+
+/** Converts the price fields of one leg between native currency and CNY. */
+private fun togglePriceCurrency(
+    fromLeg: Boolean,
+    toCny: Boolean,
+    form: EventForm,
+    instrument: Instrument,
+    quotes: QuoteSnapshot,
+) {
+    val convert: (String?) -> String? = { text ->
+        text?.toBigDecimalOrNull()?.let { value ->
+            if (toCny) {
+                TransferPricing.enteredPrice(value, true, instrument, quotes.fxRates)
+                    ?.toPlainString()
+            } else {
+                TransferPricing.nativePrice(value, true, instrument, quotes.fxRates)
+                    ?.toPlainString()
+            }
+        }
+    }
+    if (fromLeg) {
+        form.fromPrice = convert(form.fromPrice) ?: ""
+        form.lastSuggestedFromPrice = convert(form.lastSuggestedFromPrice)
+        form.fromPriceInCny = toCny
+    } else {
+        form.toPrice = convert(form.toPrice) ?: ""
+        form.lastSuggestedToPrice = convert(form.lastSuggestedToPrice)
+        form.toPriceInCny = toCny
+    }
+}
+
+private fun priceNativePreview(
+    priceText: String,
+    inCny: Boolean,
+    instrument: Instrument,
+    quotes: QuoteSnapshot,
+): BigDecimal? =
+    if (!inCny) {
+        null
+    } else {
+        priceText.toBigDecimalOrNull()?.let {
+            TransferPricing.nativePrice(it, true, instrument, quotes.fxRates)
+        }
+    }
+
+private fun nativePriceOrNull(
+    priceText: String,
+    inCny: Boolean,
+    instrument: Instrument?,
+    quotes: QuoteSnapshot,
+): BigDecimal? {
+    if (instrument == null) return null
+    val entered = priceText.toBigDecimalOrNull() ?: return null
+    return TransferPricing.nativePrice(entered, inCny, instrument, quotes.fxRates)
 }
 
 private fun nativeLegValue(
     quantityText: String,
     priceText: String,
+    inCny: Boolean,
     instrument: Instrument?,
+    quotes: QuoteSnapshot,
 ): BigDecimal? {
     if (instrument == null) return null
     val quantity = quantityText.toBigDecimalOrNull() ?: return null
     return if (instrument.kind == InstrumentKind.CASH) {
         quantity
     } else {
-        val price = priceText.toBigDecimalOrNull() ?: return null
-        quantity.multiply(price)
+        nativePriceOrNull(priceText, inCny, instrument, quotes)?.let { quantity.multiply(it) }
     }
+}
+
+private fun sameCurrency(from: Instrument, to: Instrument): Boolean =
+    from.currency.equals(to.currency, ignoreCase = true) ||
+        (from.currency.uppercase() in setOf("CNY", "CNH") &&
+            to.currency.uppercase() in setOf("CNY", "CNH"))
+
+/**
+ * Auto loss in the from-leg currency. Same-currency transfers use native
+ * values; cross-currency transfers only when both legs have an exact CNY value
+ * (e.g. CNY cash plus a foreign price typed in CNY).
+ */
+private fun autoLossNative(
+    form: EventForm,
+    fromInstrument: Instrument?,
+    toInstrument: Instrument?,
+    fromValue: BigDecimal?,
+    toValue: BigDecimal?,
+    quotes: QuoteSnapshot,
+): BigDecimal? {
+    if (fromInstrument == null || toInstrument == null) return null
+    if (sameCurrency(fromInstrument, toInstrument)) {
+        return if (fromValue != null && toValue != null) fromValue.subtract(toValue) else null
+    }
+    val fromQuantity = form.fromQuantity.toBigDecimalOrNull() ?: return null
+    val toQuantity = form.toQuantity.toBigDecimalOrNull() ?: return null
+    val fromCny = TransferPricing.exactCnyValue(
+        instrument = fromInstrument,
+        quantity = fromQuantity,
+        nativePrice = nativePriceOrNull(
+            form.fromPrice,
+            form.fromPriceInCny,
+            fromInstrument,
+            quotes,
+        ),
+        enteredPrice = form.fromPrice.toBigDecimalOrNull(),
+        inCny = form.fromPriceInCny,
+    ) ?: return null
+    val toCny = TransferPricing.exactCnyValue(
+        instrument = toInstrument,
+        quantity = toQuantity,
+        nativePrice = nativePriceOrNull(form.toPrice, form.toPriceInCny, toInstrument, quotes),
+        enteredPrice = form.toPrice.toBigDecimalOrNull(),
+        inCny = form.toPriceInCny,
+    ) ?: return null
+    return TransferPricing.lossInCurrency(
+        lossCny = fromCny.subtract(toCny),
+        lossCurrency = fromInstrument.currency,
+        fxRates = quotes.fxRates,
+    )
 }

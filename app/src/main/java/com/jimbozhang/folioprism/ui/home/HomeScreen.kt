@@ -100,6 +100,12 @@ fun HomeScreen(
         )
     }
 
+    val strategyCategories = remember(snapshot) {
+        snapshot.categories.filter { !it.isSatellite }
+    }
+    val satelliteCategories = remember(snapshot) {
+        snapshot.categories.filter { it.isSatellite }
+    }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var expandedIds by remember { mutableStateOf(setOf<String>()) }
@@ -130,10 +136,10 @@ fun HomeScreen(
         }
         item {
             PortfolioOverview(
-                categories = snapshot.categories,
+                categories = strategyCategories,
                 onCategoryClick = { categoryId ->
                     expandedIds = expandedIds + categoryId
-                    val categoryIndex = snapshot.categories
+                    val categoryIndex = strategyCategories
                         .indexOfFirst { it.category.id == categoryId }
                     if (categoryIndex >= 0) {
                         scope.launch {
@@ -143,8 +149,28 @@ fun HomeScreen(
                 },
             )
         }
-        items(snapshot.categories, key = { it.category.id }) { category ->
+        items(strategyCategories, key = { it.category.id }) { category ->
             CategoryCard(
+                category = category,
+                data = data,
+                quotes = quotes,
+                snapshot = snapshot,
+                positions = positions,
+                expanded = category.category.id in expandedIds,
+                onToggleExpanded = {
+                    val id = category.category.id
+                    expandedIds = if (id in expandedIds) {
+                        expandedIds - id
+                    } else {
+                        expandedIds + id
+                    }
+                },
+            )
+        }
+        // Satellite assets belong to the portfolio value but not to the
+        // rebalancing strategy: a quiet card after the seven strategy cards.
+        items(satelliteCategories, key = { it.category.id }) { category ->
+            SatelliteCard(
                 category = category,
                 data = data,
                 quotes = quotes,
@@ -365,7 +391,11 @@ private fun SummaryCard(snapshot: PortfolioSnapshot) {
             Spacer(modifier = Modifier.height(14.dp))
             HorizontalDivider(color = FolioDivider)
             Spacer(modifier = Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(
+                    if (snapshot.satelliteValueCny.signum() > 0) 22.dp else 32.dp,
+                ),
+            ) {
                 Metric(
                     label = "红利",
                     value = formatCny(snapshot.dividendValueCny),
@@ -376,6 +406,18 @@ private fun SummaryCard(snapshot: PortfolioSnapshot) {
                     value = formatCny(snapshot.portfolioValueCny),
                     secondary = formatPercent(snapshot.portfolioShare),
                 )
+                if (snapshot.satelliteValueCny.signum() > 0) {
+                    Metric(
+                        label = "卫星",
+                        value = formatCny(snapshot.satelliteValueCny),
+                        secondary = formatPercent(
+                            SnapshotCalculator.ratio(
+                                snapshot.satelliteValueCny,
+                                snapshot.totalValueCny,
+                            ),
+                        ),
+                    )
+                }
             }
         }
     }
@@ -529,6 +571,134 @@ private fun CategoryCard(
                 )
             }
 
+            if (expanded) {
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = FolioDivider)
+                if (holdings.isEmpty()) {
+                    Text(
+                        text = "该类别暂无持仓",
+                        modifier = Modifier.padding(top = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    holdings.forEach { (key, quantity) ->
+                        HoldingRow(
+                            data = data,
+                            quotes = quotes,
+                            snapshot = snapshot,
+                            key = key,
+                            quantity = quantity,
+                        )
+                        HorizontalDivider(color = FolioDivider)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Compact card for a satellite category: value, share of total assets and its
+ * holdings, with no target/range bar. Kept visually quieter than the seven
+ * strategy cards on purpose.
+ */
+@Composable
+private fun SatelliteCard(
+    category: CategorySnapshot,
+    data: PortfolioData,
+    quotes: QuoteSnapshot,
+    snapshot: PortfolioSnapshot,
+    positions: Map<PositionKey, BigDecimal>,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+) {
+    val categoryColor = remember(category.category.color) { parseCategoryColor(category.category) }
+    val holdings = remember(category.category.id, positions, data.instruments, snapshot) {
+        positions.entries
+            .filter { (key, quantity) ->
+                quantity.signum() != 0 &&
+                    data.instrument(key.instrumentId)?.categoryId == category.category.id
+            }
+            .sortedByDescending { (key, _) -> snapshot.positionValues[key] ?: BigDecimal.ZERO }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, FolioDivider),
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .animateContentSize(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggleExpanded() },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Spacer(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(categoryColor),
+                    )
+                    Text(
+                        text = category.category.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = FolioInk,
+                    )
+                    Text(
+                        text = "不计入再平衡",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) {
+                        Icons.Filled.ExpandLess
+                    } else {
+                        Icons.Filled.ExpandMore
+                    },
+                    contentDescription = if (expanded) "收起" else "展开",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                Text(
+                    text = formatCny(category.valueCny),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = FolioInk,
+                )
+                Text(
+                    text = "占总资产 ${formatPercent(category.share)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (category.incomplete) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "部分价格缺失，估值不完整",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioCoral,
+                )
+            }
             if (expanded) {
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = FolioDivider)

@@ -1,6 +1,7 @@
 package com.jimbozhang.folioprism.data.web
 
 import com.jimbozhang.folioprism.domain.calc.EventValues
+import com.jimbozhang.folioprism.domain.calc.TransferPricing
 import com.jimbozhang.folioprism.domain.calc.localDate
 import com.jimbozhang.folioprism.domain.calc.parseEventTime
 import com.jimbozhang.folioprism.domain.model.AdjustmentEvent
@@ -38,10 +39,14 @@ data class WebEventDraft(
     val fromInstrumentId: String? = null,
     val fromQuantity: String = "",
     val fromPrice: String = "",
+    /** True when [fromPrice] is typed in CNY instead of the instrument currency. */
+    val fromPriceInCny: Boolean = false,
     val toInstitutionId: String? = null,
     val toInstrumentId: String? = null,
     val toQuantity: String = "",
     val toPrice: String = "",
+    /** True when [toPrice] is typed in CNY instead of the instrument currency. */
+    val toPriceInCny: Boolean = false,
     val feeLoss: String = "",
     val feeFromCash: Boolean = false,
     val feeInstitutionId: String? = null,
@@ -116,8 +121,24 @@ object WebEventBuilder {
         }
         val fromQuantity = positive(draft.fromQuantity, "转出数量")
         val toQuantity = positive(draft.toQuantity, "转入数量")
-        val fromPrice = priceFor(fromInstrument, draft.fromPrice)
-        val toPrice = priceFor(toInstrument, draft.toPrice)
+        val fromEnteredPrice = if (fromInstrument.kind == InstrumentKind.QUOTED) {
+            positive(draft.fromPrice, "${fromInstrument.code} 单价")
+        } else {
+            null
+        }
+        val toEnteredPrice = if (toInstrument.kind == InstrumentKind.QUOTED) {
+            positive(draft.toPrice, "${toInstrument.code} 单价")
+        } else {
+            null
+        }
+        val fromPrice = fromEnteredPrice?.let {
+            TransferPricing.nativePrice(it, draft.fromPriceInCny, fromInstrument, quotes.fxRates)
+                ?: error("缺少 ${fromInstrument.currency} 当前汇率，请刷新行情")
+        }
+        val toPrice = toEnteredPrice?.let {
+            TransferPricing.nativePrice(it, draft.toPriceInCny, toInstrument, quotes.fxRates)
+                ?: error("缺少 ${toInstrument.currency} 当前汇率，请刷新行情")
+        }
         val values = EventValues.transferValues(
             fromQuantity = fromQuantity,
             toQuantity = toQuantity,
@@ -132,7 +153,29 @@ object WebEventBuilder {
         val autoLoss = if (sameCurrency) {
             values.fromNative.subtract(values.toNative).toMoneyAmount()
         } else {
-            BigDecimal.ZERO
+            val fromCny = TransferPricing.exactCnyValue(
+                instrument = fromInstrument,
+                quantity = fromQuantity,
+                nativePrice = fromPrice,
+                enteredPrice = fromEnteredPrice,
+                inCny = draft.fromPriceInCny,
+            )
+            val toCny = TransferPricing.exactCnyValue(
+                instrument = toInstrument,
+                quantity = toQuantity,
+                nativePrice = toPrice,
+                enteredPrice = toEnteredPrice,
+                inCny = draft.toPriceInCny,
+            )
+            if (fromCny != null && toCny != null) {
+                TransferPricing.lossInCurrency(
+                    lossCny = fromCny.subtract(toCny),
+                    lossCurrency = lossCurrency,
+                    fxRates = quotes.fxRates,
+                ) ?: BigDecimal.ZERO
+            } else {
+                BigDecimal.ZERO
+            }
         }
         val totalLoss = if (draft.feeLoss.isBlank()) {
             autoLoss
@@ -374,13 +417,6 @@ object WebEventBuilder {
 
     private fun nonZero(text: String, label: String): BigDecimal =
         text.toBigDecimalOrNull()?.takeIf { it.signum() != 0 } ?: error("请输入有效的$label")
-
-    private fun priceFor(instrument: Instrument, text: String): BigDecimal? =
-        if (instrument.kind == InstrumentKind.QUOTED) {
-            positive(text, "${instrument.code} 单价")
-        } else {
-            null
-        }
 
     private fun currentFx(currency: String, quotes: QuoteSnapshot): BigDecimal =
         when (currency.uppercase()) {

@@ -722,4 +722,89 @@ class TransferSuggestionTest {
         )
         assertNull(noFromInstrument)
     }
+
+    @Test
+    fun satelliteLegsGetNoRebalanceSuggestion() {
+        val satellite = quotedInstrument("ins_sat", "cat_sat", "CNY", "000005")
+        val data = dataWithCategories(
+            instruments = listOf(fund, cashCny, satellite),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "40"),
+                category(CategoryIds.CASH, "40"),
+                category("cat_sat", "0").copy(specialRule = "satellite"),
+            ),
+        )
+        val positions = mapOf(
+            PositionKey(INST_A, FUND) to bd("1000"),
+            PositionKey(INST_A, CASH_CNY) to bd("1000"),
+            PositionKey(INST_A, "ins_sat") to bd("1000"),
+        )
+        val provider = rebalanceProvider(mapOf(FUND to bd("2"), "ins_sat" to bd("1")))
+
+        assertNull(
+            TransferSuggestion.suggestRebalanceOutQuantity(
+                data = data,
+                positions = positions,
+                provider = provider,
+                date = LocalDate.of(2026, 1, 1),
+                fromInstitutionId = INST_A,
+                fromInstrumentId = FUND,
+                toInstrumentId = "ins_sat",
+            ),
+        )
+        assertNull(
+            TransferSuggestion.suggestRebalanceIn(
+                data = data,
+                positions = positions,
+                provider = provider,
+                date = LocalDate.of(2026, 1, 1),
+                fromInstitutionId = INST_A,
+                fromInstrumentId = "ins_sat",
+                toInstitutionId = INST_A,
+                toInstrumentId = FUND,
+            ),
+        )
+        assertNull(
+            TransferSuggestion.suggestRebalanceIn(
+                data = data,
+                positions = positions,
+                provider = provider,
+                date = LocalDate.of(2026, 1, 1),
+                fromInstitutionId = INST_A,
+                fromInstrumentId = FUND,
+                toInstitutionId = INST_A,
+                toInstrumentId = "ins_sat",
+            ),
+        )
+    }
+
+    @Test
+    fun satelliteValueDoesNotDiluteTargetBases() {
+        val satellite = quotedInstrument("ins_sat", "cat_sat", "CNY", "000005")
+        val data = dataWithCategories(
+            instruments = listOf(fund, cashCny, satellite),
+            categories = listOf(
+                category(CategoryIds.GROWTH, "50"),
+                category(CategoryIds.CASH, "50"),
+                category("cat_sat", "0").copy(specialRule = "satellite"),
+            ),
+        )
+        // Strategy assets: growth 1500 + cash 500 = 2000; satellite 1000 excluded.
+        // D = 1500 - 50% * 2000 = 500 -> 500 / 1500 * 750 = 250 units.
+        val positions = mapOf(
+            PositionKey(INST_A, FUND) to bd("750"),
+            PositionKey(INST_A, CASH_CNY) to bd("500"),
+            PositionKey(INST_A, "ins_sat") to bd("1000"),
+        )
+        val suggested = TransferSuggestion.suggestRebalanceOutQuantity(
+            data = data,
+            positions = positions,
+            provider = rebalanceProvider(mapOf(FUND to bd("2"), "ins_sat" to bd("1"))),
+            date = LocalDate.of(2026, 1, 1),
+            fromInstitutionId = INST_A,
+            fromInstrumentId = FUND,
+            toInstrumentId = CASH_CNY,
+        )
+        assertDecimal("250", suggested)
+    }
 }

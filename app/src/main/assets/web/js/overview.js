@@ -38,12 +38,22 @@ const OverviewView = {
 
   kpiGrid(overview) {
     const kpis = el('div', 'kpi-grid');
-    kpis.appendChild(this.kpi('总资产', Fmt.cny(overview.totalValueCny),
-      '红利 ' + Fmt.cny(overview.dividendValueCny) + ' · 组合 ' + Fmt.cny(overview.portfolioValueCny)));
+    const shareOf = function (value) {
+      const total = numOr(overview.totalValueCny, 0);
+      return total === 0 ? '0' : String(numOr(value, 0) / total);
+    };
+    const parts = '红利 ' + Fmt.cny(overview.dividendValueCny) +
+      ' · 组合 ' + Fmt.cny(overview.portfolioValueCny) +
+      (overview.satelliteValueCny ? ' · 卫星 ' + Fmt.cny(overview.satelliteValueCny) : '');
+    kpis.appendChild(this.kpi('总资产', Fmt.cny(overview.totalValueCny), parts));
     kpis.appendChild(this.kpi('红利部分', Fmt.cny(overview.dividendValueCny),
-      '占全部资产 ' + Fmt.percent(overview.dividendShare), true));
+      '占总资产 ' + Fmt.percent(shareOf(overview.dividendValueCny)), true));
     kpis.appendChild(this.kpi('组合部分', Fmt.cny(overview.portfolioValueCny),
-      '占全部资产 ' + Fmt.percent(overview.portfolioShare), true));
+      '占总资产 ' + Fmt.percent(shareOf(overview.portfolioValueCny)), true));
+    if (overview.satelliteValueCny) {
+      kpis.appendChild(this.kpi('卫星资产', Fmt.cny(overview.satelliteValueCny),
+        '占总资产 ' + Fmt.percent(shareOf(overview.satelliteValueCny)) + ' · 不计入再平衡', true));
+    }
     return kpis;
   },
 
@@ -65,6 +75,9 @@ const OverviewView = {
     const self = this;
 
     overview.categories.forEach(function (category) {
+      // Satellite assets have no target/range and stay out of the allocation
+      // bars; their compact card below shows value and share.
+      if (isSatellite(category)) return;
       const row = el('div', 'alloc-row');
       row.title = '点击定位到分类卡片';
 
@@ -146,6 +159,7 @@ const OverviewView = {
   },
 
   categoryCard(overview, category) {
+    const satellite = isSatellite(category);
     const positions = overview.positions.filter(function (position) {
       return position.categoryId === category.id;
     });
@@ -156,7 +170,8 @@ const OverviewView = {
     const line = el('div', 'cat-title-line');
     line.appendChild(colorDot(category.color));
     line.appendChild(el('span', 'cat-name', category.name));
-    line.appendChild(el('span', 'cat-share ' + (category.inRange ? 'in' : 'out'),
+    line.appendChild(el('span',
+      'cat-share' + (satellite ? '' : ' ' + (category.inRange ? 'in' : 'out')),
       Fmt.percent(category.share)));
     line.appendChild(el('span', 'caret', '▾'));
     head.appendChild(line);
@@ -171,11 +186,16 @@ const OverviewView = {
     const values = el('div', 'cat-values');
     const main = el('div');
     main.appendChild(el('div', 'cat-value', Fmt.cny(category.valueCny)));
-    main.appendChild(el('div', 'cat-target',
-      '目标 ' + Fmt.cny(category.targetValueCny) + ' · ' + Fmt.pctPoints(category.targetPct, 1)));
+    if (satellite) {
+      main.appendChild(el('div', 'cat-target', '占总资产 ' + Fmt.percent(category.share)));
+    } else {
+      main.appendChild(el('div', 'cat-target',
+        '目标 ' + Fmt.cny(category.targetValueCny) + ' · ' + Fmt.pctPoints(category.targetPct, 1)));
+    }
     values.appendChild(main);
-    values.appendChild(el('div', 'cat-range',
-      '区间 ' + Fmt.pctPoints(category.minPct, 1) + ' – ' + Fmt.pctPoints(category.maxPct, 1)));
+    values.appendChild(el('div', 'cat-range', satellite
+      ? '不计入再平衡'
+      : '区间 ' + Fmt.pctPoints(category.minPct, 1) + ' – ' + Fmt.pctPoints(category.maxPct, 1)));
     body.appendChild(values);
 
     const usd = usdSubtotal(positions);
@@ -186,7 +206,7 @@ const OverviewView = {
       body.appendChild(el('div', 'cat-meta bad', '部分价格缺失，估值不完整'));
     }
 
-    body.appendChild(this.rangeViz(category));
+    if (!satellite) body.appendChild(this.rangeViz(category));
 
     const details = el('div', 'cat-details');
     if (positions.length === 0) {
@@ -365,10 +385,15 @@ function isCny(currency) {
   return upper === 'CNY' || upper === 'CNH';
 }
 
+function isSatellite(category) {
+  return !!category && category.specialRule === 'satellite';
+}
+
 /** Shared bar scale: the largest total-based share or target, floored at 10%, +15% headroom. */
 function overviewScale(categories) {
   let scale = 0.1;
   categories.forEach(function (category) {
+    if (isSatellite(category)) return;
     scale = Math.max(
       scale,
       numOr(category.visualShare, 0),

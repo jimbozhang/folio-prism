@@ -5,6 +5,7 @@ import com.jimbozhang.folioprism.domain.model.CategoryIds
 import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
+import com.jimbozhang.folioprism.domain.model.SATELLITE_RULE
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.money.CNY_SCALE
 import java.math.BigDecimal
@@ -39,6 +40,8 @@ data class CategorySnapshot(
     val visualTarget: BigDecimal = BigDecimal.ZERO,
     val visualMin: BigDecimal = BigDecimal.ZERO,
     val visualMax: BigDecimal = BigDecimal.ZERO,
+    /** Satellite classes have no target semantics; share is measured against total assets. */
+    val isSatellite: Boolean = false,
 )
 
 data class PortfolioSnapshot(
@@ -52,6 +55,12 @@ data class PortfolioSnapshot(
     val currencyValues: Map<String, BigDecimal>,
     val positionValues: Map<PositionKey, BigDecimal?>,
     val hasMissingPrices: Boolean,
+    /** Value of categories marked `specialRule = "satellite"`. */
+    val satelliteValueCny: BigDecimal = BigDecimal.ZERO,
+    /** Total assets minus satellite: the base for the seven strategy categories. */
+    val strategyValueCny: BigDecimal = totalValueCny,
+    /** Strategy assets minus dividend: the base for the six non-dividend categories. */
+    val strategyPortfolioValueCny: BigDecimal = portfolioValueCny,
 )
 
 object SnapshotCalculator {
@@ -104,7 +113,19 @@ object SnapshotCalculator {
         dividendCategoryIds.forEach { categoryId ->
             dividendValue = dividendValue.add(categoryValues[categoryId] ?: BigDecimal.ZERO)
         }
-        val portfolioValue = total.subtract(dividendValue)
+
+        // Satellite classes count in total assets but are not part of the
+        // rebalancing strategy, so every target base excludes their value.
+        val satelliteCategoryIds = data.settings.categories
+            .filter { it.specialRule == SATELLITE_RULE }
+            .map { it.id }
+            .toSet()
+        var satelliteValue = BigDecimal.ZERO
+        satelliteCategoryIds.forEach { categoryId ->
+            satelliteValue = satelliteValue.add(categoryValues[categoryId] ?: BigDecimal.ZERO)
+        }
+        val strategyValue = total.subtract(satelliteValue)
+        val portfolioValue = strategyValue.subtract(dividendValue)
 
         val categories = data.settings.categories
             .sortedBy { it.order }
@@ -115,6 +136,7 @@ object SnapshotCalculator {
                     positions = positions,
                     valueCny = categoryValues[category.id] ?: BigDecimal.ZERO,
                     totalValue = total,
+                    strategyValue = strategyValue,
                     portfolioValue = portfolioValue,
                     incomplete = incompleteCategories.contains(category.id),
                 )
@@ -123,6 +145,8 @@ object SnapshotCalculator {
         return PortfolioSnapshot(
             totalValueCny = total,
             dividendValueCny = dividendValue,
+            // Display shares decompose total assets: dividend + portfolio +
+            // satellite = total. Targets, by contrast, use the strategy bases.
             dividendShare = ratio(dividendValue, total),
             portfolioValueCny = portfolioValue,
             portfolioShare = ratio(portfolioValue, total),
@@ -131,6 +155,9 @@ object SnapshotCalculator {
             currencyValues = currencyValues,
             positionValues = positionValues,
             hasMissingPrices = hasMissingPrices,
+            satelliteValueCny = satelliteValue,
+            strategyValueCny = strategyValue,
+            strategyPortfolioValueCny = portfolioValue,
         )
     }
 
@@ -140,11 +167,31 @@ object SnapshotCalculator {
         positions: Map<PositionKey, BigDecimal>,
         valueCny: BigDecimal,
         totalValue: BigDecimal,
+        strategyValue: BigDecimal,
         portfolioValue: BigDecimal,
         incomplete: Boolean,
     ): CategorySnapshot {
+        if (category.specialRule == SATELLITE_RULE) {
+            return CategorySnapshot(
+                category = category,
+                valueCny = valueCny,
+                share = ratio(valueCny, totalValue),
+                targetShare = BigDecimal.ZERO,
+                targetValueCny = null,
+                minValueCny = null,
+                maxValueCny = null,
+                inRange = true,
+                gapToTargetCny = null,
+                gapToMinCny = null,
+                gapToMaxCny = null,
+                incomplete = incomplete,
+                visualShare = ratio(valueCny, totalValue),
+                isSatellite = true,
+            )
+        }
+
         val isDividend = category.specialRule == "dividend"
-        val base = if (isDividend) totalValue else portfolioValue
+        val base = if (isDividend) strategyValue else portfolioValue
         val share = ratio(valueCny, base)
         val targetShare = fraction(category.targetPct)
         val minShare = fraction(category.minPct)
@@ -183,10 +230,10 @@ object SnapshotCalculator {
             incomplete = incomplete,
             goldMinPriceCnyPerGram = goldPriceThresholds?.first,
             goldMaxPriceCnyPerGram = goldPriceThresholds?.second,
-            visualShare = ratio(valueCny, totalValue),
-            visualTarget = ratio(targetShare.multiply(base), totalValue),
-            visualMin = ratio(minShare.multiply(base), totalValue),
-            visualMax = ratio(maxShare.multiply(base), totalValue),
+            visualShare = ratio(valueCny, strategyValue),
+            visualTarget = ratio(targetShare.multiply(base), strategyValue),
+            visualMin = ratio(minShare.multiply(base), strategyValue),
+            visualMax = ratio(maxShare.multiply(base), strategyValue),
         )
     }
 
@@ -256,6 +303,7 @@ object SnapshotCalculator {
     fun overviewScale(categories: List<CategorySnapshot>): Float {
         var scale = 0.1f
         categories.forEach { category ->
+            if (category.isSatellite) return@forEach
             scale = maxOf(scale, category.visualShare.toFloat(), category.visualTarget.toFloat())
         }
         return minOf(scale * 1.15f, 1f)

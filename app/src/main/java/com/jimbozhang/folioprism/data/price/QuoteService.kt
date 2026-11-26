@@ -188,10 +188,11 @@ class QuoteService(
             }
         }
 
-        // ETF / US / unknown sources: parallel per-instrument requests.
+        // ETF / US / HK / unknown sources: parallel per-instrument requests.
         val individual = required.filter {
             routes[it.instrument.id] == QuoteRoute.TencentEtf ||
                 routes[it.instrument.id] == QuoteRoute.TencentUs ||
+                routes[it.instrument.id] == QuoteRoute.TencentHk ||
                 routes[it.instrument.id] is QuoteRoute.Unknown
         }
         individual
@@ -201,6 +202,7 @@ class QuoteService(
                         when (val route = routes[req.instrument.id]) {
                             QuoteRoute.TencentEtf -> fetchEtf(req.instrument)
                             QuoteRoute.TencentUs -> fetchUs(req.instrument)
+                            QuoteRoute.TencentHk -> fetchHk(req.instrument)
                             is QuoteRoute.Unknown -> error("未知行情源: ${route.source}")
                             else -> error("unexpected route")
                         }
@@ -257,6 +259,7 @@ class QuoteService(
                     ?.get(instrument.code)?.name
             QuoteRoute.TencentEtf -> runCatching { fetchEtf(instrument) }.getOrNull()?.name
             QuoteRoute.TencentUs -> runCatching { fetchUs(instrument) }.getOrNull()?.name
+            QuoteRoute.TencentHk -> runCatching { fetchHk(instrument) }.getOrNull()?.name
             // Gold codes are self-describing; no request needed.
             QuoteRoute.GoldSge -> "AU9999"
             QuoteRoute.GoldXau -> "XAU"
@@ -392,6 +395,22 @@ class QuoteService(
     private suspend fun fetchEtf(instrument: Instrument): Quote {
         val prefix = if (instrument.code.startsWith("1")) "sz" else "sh"
         val key = "$prefix${instrument.code}"
+        return fetchTencentDayQuote(instrument, key, "CNY")
+    }
+
+    private suspend fun fetchHk(instrument: Instrument): Quote {
+        // Tencent keys HK stocks as hk + the 5-digit code; a code without
+        // leading zeros (hk1810) comes back empty.
+        val key = "hk${instrument.code.padStart(5, '0')}"
+        return fetchTencentDayQuote(instrument, key, "HKD")
+    }
+
+    /** Current price from the Tencent kline quote block, shared by ETF and HK. */
+    private suspend fun fetchTencentDayQuote(
+        instrument: Instrument,
+        key: String,
+        currency: String,
+    ): Quote {
         val url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=$key,day,,,1,qfq"
         val root = parseObject(getWithRetry(url))
         val data = root.obj("data") ?: error("data missing")
@@ -404,7 +423,7 @@ class QuoteService(
         return Quote(
             instrumentId = instrument.id,
             price = price,
-            currency = "CNY",
+            currency = currency,
             name = arr.getOrNull(1)?.stringValue() ?: instrument.code,
             updateTime = arr.getOrNull(30)?.stringValue() ?: "",
             source = "tencent $key",
@@ -534,6 +553,7 @@ class QuoteService(
         QuoteRoute.FundBatch -> "eastmoney fundmobapi"
         QuoteRoute.TencentEtf -> "tencent etf"
         QuoteRoute.TencentUs -> "tencent us"
+        QuoteRoute.TencentHk -> "tencent hk"
         QuoteRoute.GoldSge -> "eastmoney AU9999"
         QuoteRoute.GoldXau -> "gold-api XAU"
         is QuoteRoute.Unknown -> route.source

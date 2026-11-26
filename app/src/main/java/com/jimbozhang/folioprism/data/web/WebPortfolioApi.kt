@@ -159,6 +159,11 @@ class WebPortfolioApi(
             dividendShare = snapshot.dividendShare.plain(),
             portfolioValueCny = snapshot.portfolioValueCny.plain(),
             portfolioShare = snapshot.portfolioShare.plain(),
+            satelliteValueCny = snapshot.satelliteValueCny
+                .takeIf { it.signum() > 0 }?.plain(),
+            satelliteShare = snapshot.satelliteValueCny
+                .takeIf { it.signum() > 0 }
+                ?.let { SnapshotCalculator.ratio(it, snapshot.totalValueCny).plain() },
             hasMissingPrices = snapshot.hasMissingPrices,
             categories = snapshot.categories.map { category ->
                 CategoryViewDto(

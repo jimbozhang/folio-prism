@@ -387,6 +387,62 @@ class WebEventDraftTest {
     }
 
     @Test
+    fun cnyPriceEntryConvertsToNativeAndDerivesCrossCurrencyLoss() {
+        val hk = quotedInstrument("hk_stock", CategoryIds.GROWTH, currency = "HKD", code = "01810")
+        val data2 = portfolio(
+            institutions = listOf(Institution(INST_A, "A")),
+            instruments = listOf(cash, hk),
+        )
+        val quotes2 = QuoteSnapshot(fxRates = mapOf("HKD" to bd("0.9")))
+        val draft = WebEventDraft(
+            type = "transfer",
+            date = DATE1,
+            fromInstitutionId = INST_A,
+            fromInstrumentId = CASH_CNY,
+            fromQuantity = "910",
+            toInstitutionId = INST_A,
+            toInstrumentId = "hk_stock",
+            toQuantity = "10",
+            toPrice = "90",
+            toPriceInCny = true,
+        )
+
+        val transfer = WebEventBuilder.build(data2, quotes2, draft, null)
+            .getOrThrow().single() as TransferEvent
+
+        assertDecimal("100", transfer.toPrice)
+        assertDecimal("10", transfer.lossAmount)
+        assertEquals("CNY", transfer.lossCurrency)
+    }
+
+    @Test
+    fun nativePriceEntryKeepsCrossCurrencyLossManual() {
+        val hk = quotedInstrument("hk_stock", CategoryIds.GROWTH, currency = "HKD", code = "01810")
+        val data2 = portfolio(
+            institutions = listOf(Institution(INST_A, "A")),
+            instruments = listOf(cash, hk),
+        )
+        val quotes2 = QuoteSnapshot(fxRates = mapOf("HKD" to bd("0.9")))
+        val draft = WebEventDraft(
+            type = "transfer",
+            date = DATE1,
+            fromInstitutionId = INST_A,
+            fromInstrumentId = CASH_CNY,
+            fromQuantity = "910",
+            toInstitutionId = INST_A,
+            toInstrumentId = "hk_stock",
+            toQuantity = "10",
+            toPrice = "100",
+        )
+
+        val transfer = WebEventBuilder.build(data2, quotes2, draft, null)
+            .getOrThrow().single() as TransferEvent
+
+        assertDecimal("100", transfer.toPrice)
+        assertDecimal("0", transfer.lossAmount)
+    }
+
+    @Test
     fun adjustmentRequiresReasonAndNonZeroDelta() {
         val noReason = WebEventDraft(
             type = "adjustment",

@@ -13,6 +13,13 @@ data class Meta(
     val appVersion: String = "0.4.0",
 )
 
+/**
+ * Marks an asset class that counts in total assets but stands outside the
+ * rebalancing strategy: no target/range, excluded from every target base and
+ * from rebalancing suggestions and statistics.
+ */
+const val SATELLITE_RULE = "satellite"
+
 @Serializable
 data class Category(
     val id: String,
@@ -24,6 +31,52 @@ data class Category(
     @Serializable(with = BigDecimalAsStringSerializer::class) val maxPct: BigDecimal,
     val specialRule: String? = null,
 )
+
+val Category.isSatellite: Boolean
+    get() = specialRule == SATELLITE_RULE
+
+/**
+ * Built-in display names of the asset classes: names are fixed product
+ * concepts, never user-editable. A category outside the known set keeps the
+ * name stored in the JSON file.
+ */
+object CategoryNames {
+    const val SATELLITE = "卫星"
+
+    private val BUILT_IN = mapOf(
+        CategoryIds.DIVIDEND to "红利",
+        CategoryIds.GROWTH to "成长",
+        CategoryIds.US_EQUITY to "美股",
+        CategoryIds.US_BOND to "美债",
+        CategoryIds.CN_BOND to "中债",
+        CategoryIds.GOLD to "黄金",
+        CategoryIds.CASH to "现金",
+    )
+
+    fun builtIn(category: Category): String =
+        BUILT_IN[category.id]
+            ?: if (category.specialRule == SATELLITE_RULE) SATELLITE else category.name
+}
+
+/**
+ * Adds the built-in satellite category when the data has none, so the user
+ * can pick it while creating an instrument without hand-editing JSON.
+ */
+fun PortfolioData.withSatelliteCategory(): PortfolioData {
+    if (settings.categories.any { it.specialRule == SATELLITE_RULE }) return this
+    if (settings.categories.any { it.id == CategoryIds.SATELLITE }) return this
+    val satellite = Category(
+        id = CategoryIds.SATELLITE,
+        name = CategoryNames.SATELLITE,
+        order = (settings.categories.maxOfOrNull { it.order } ?: 0) + 1,
+        color = "#00b894",
+        targetPct = BigDecimal.ZERO,
+        minPct = BigDecimal.ZERO,
+        maxPct = BigDecimal.ZERO,
+        specialRule = SATELLITE_RULE,
+    )
+    return copy(settings = settings.copy(categories = settings.categories + satellite))
+}
 
 @Serializable
 data class GoldPremium(

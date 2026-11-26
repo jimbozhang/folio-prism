@@ -82,4 +82,24 @@ class QuoteRouterTest {
         val unknown = quotedInstrument("x", CategoryIds.GROWTH, code = "ABC123")
         assertEquals(QuoteRoute.Manual, QuoteRouter.route(unknown, "XAU"))
     }
+
+    @Test
+    fun hkFiveDigitCodeUsesTencentHk() {
+        val hk = quotedInstrument("hk", CategoryIds.GROWTH, currency = "HKD", code = "01810")
+        assertEquals(QuoteRoute.TencentHk, QuoteRouter.route(hk, "XAU"))
+    }
+
+    @Test
+    fun hkExplicitSourceIsHonored() {
+        val hk = quotedInstrument("hk", CategoryIds.GROWTH, currency = "HKD", code = "01810").copy(
+            quote = QuoteConfig(mode = QuoteMode.AUTO, source = "hk"),
+        )
+        assertEquals(QuoteRoute.TencentHk, QuoteRouter.route(hk, "XAU"))
+    }
+
+    @Test
+    fun fourDigitCodeDoesNotRouteToHk() {
+        val code = quotedInstrument("hk", CategoryIds.GROWTH, currency = "HKD", code = "1810")
+        assertEquals(QuoteRoute.Manual, QuoteRouter.route(code, "XAU"))
+    }
 }

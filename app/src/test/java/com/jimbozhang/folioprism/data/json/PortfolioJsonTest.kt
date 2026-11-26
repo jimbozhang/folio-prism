@@ -1,5 +1,6 @@
 package com.jimbozhang.folioprism.data.json
 
+import com.jimbozhang.folioprism.domain.model.CategoryIds
 import com.jimbozhang.folioprism.domain.model.ExpenseEvent
 import com.jimbozhang.folioprism.domain.model.Meta
 import com.jimbozhang.folioprism.domain.model.PortfolioData
@@ -55,5 +56,23 @@ class PortfolioJsonTest {
         // The legacy value is dropped on load, so the next save removes the
         // field from every event, not only the edited ones.
         assertEquals("", decoded.events.first().createdAt)
+    }
+
+    @Test
+    fun decodingAppliesBuiltInCategoryNames() {
+        val data = portfolioWith(expense()).copy(
+            settings = Settings(
+                categories = DefaultData.defaultCategories().map {
+                    if (it.id == CategoryIds.GROWTH) it.copy(name = "自定义成长") else it
+                },
+            ),
+        )
+
+        val decoded = PortfolioJson.decode(PortfolioJson.encode(data))
+
+        assertEquals(
+            "成长",
+            decoded.settings.categories.first { it.id == CategoryIds.GROWTH }.name,
+        )
     }
 }

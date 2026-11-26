@@ -60,6 +60,7 @@ class HistoricalPriceService(
     // backoff window. Kept in memory only; a fresh session retries freely.
     private val lastFailedAt = linkedMapOf<String, Long>()
     private val sixDigits = Regex("^\\d{6}$")
+    private val fiveDigits = Regex("^\\d{5}$")
     private val onExchange = Regex("^[15]\\d{5}$")
     private val usTicker = Regex("^[A-Z]{2,5}$")
 
@@ -335,6 +336,7 @@ class HistoricalPriceService(
             "eastmoneyfund", "fund", "fundbatch" -> return HistorySource.FUND
             "tencentetf", "etf", "bond" -> return HistorySource.TENCENT
             "tencentus", "us" -> return HistorySource.US_SINA
+            "tencenthk", "hk" -> return HistorySource.TENCENT
             "au9999", "sge", "xau" -> return HistorySource.GOLD_SINA
         }
         return when {
@@ -344,6 +346,7 @@ class HistoricalPriceService(
                     onExchange.matches(instrument.code)) -> HistorySource.TENCENT
             sixDigits.matches(instrument.code) -> HistorySource.FUND
             usTicker.matches(instrument.code) -> HistorySource.US_SINA
+            fiveDigits.matches(instrument.code) -> HistorySource.TENCENT
             else -> HistorySource.UNKNOWN
         }
     }
@@ -377,13 +380,20 @@ class HistoricalPriceService(
         return HistoricalSeries(prices, "eastmoney fund history")
     }
 
+    private fun tencentKlineKey(instrument: Instrument): String =
+        if (fiveDigits.matches(instrument.code)) {
+            "hk${instrument.code.padStart(5, '0')}"
+        } else {
+            val prefix = if (instrument.code.startsWith("1")) "sz" else "sh"
+            "$prefix${instrument.code}"
+        }
+
     private suspend fun fetchTencentHistory(
         instrument: Instrument,
         from: LocalDate,
         to: LocalDate,
     ): HistoricalSeries {
-        val prefix = if (instrument.code.startsWith("1")) "sz" else "sh"
-        val key = "$prefix${instrument.code}"
+        val key = tencentKlineKey(instrument)
         val urls = listOf(
             "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get" +
                 "?param=$key,day,$from,$to,1000,qfq",

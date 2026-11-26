@@ -4,7 +4,9 @@ import com.jimbozhang.folioprism.domain.model.CategoryIds
 import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
+import com.jimbozhang.folioprism.domain.model.SATELLITE_RULE
 import com.jimbozhang.folioprism.domain.model.TransferEvent
+import com.jimbozhang.folioprism.domain.model.category
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.money.toCnyAmount
 import java.math.BigDecimal
@@ -118,6 +120,13 @@ object RebalanceStatsCalculator {
                 val toInstrument = data.instrument(event.to.instrumentId)
                 if (fromInstrument == null || toInstrument == null) {
                     incomplete = true
+                    return@forEach
+                }
+                // Satellite assets stand outside the rebalancing strategy, so
+                // trades into or out of them are not rebalancing activity.
+                if (data.category(fromInstrument.categoryId)?.specialRule == SATELLITE_RULE ||
+                    data.category(toInstrument.categoryId)?.specialRule == SATELLITE_RULE
+                ) {
                     return@forEach
                 }
                 if (fromInstrument.id == toInstrument.id) {
