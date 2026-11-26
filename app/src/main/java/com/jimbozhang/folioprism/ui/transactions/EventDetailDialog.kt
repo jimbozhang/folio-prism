@@ -50,6 +50,7 @@ import com.jimbozhang.folioprism.domain.model.PositionRef
 import com.jimbozhang.folioprism.domain.model.TransferEvent
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.money.toMoneyAmount
+import com.jimbozhang.folioprism.ui.components.formatCashNative
 import com.jimbozhang.folioprism.ui.components.formatNative
 import com.jimbozhang.folioprism.ui.components.formatQuantity
 import com.jimbozhang.folioprism.ui.theme.FolioCoral
@@ -273,7 +274,7 @@ private fun incomeRows(data: PortfolioData, event: IncomeEvent): List<Pair<Strin
     rows += "类型" to if (event.kind == IncomeKind.DIVIDEND) "现金分红" else "利息"
     rows += "来源" to (event.source?.let { positionLabel(data, it) } ?: "外部")
     rows += "入账" to positionLabel(data, event.destination)
-    rows += "金额" to formatNative(event.amount, event.currency)
+    rows += "金额" to formatCashNative(event.amount, event.currency)
     rows += "立即转出" to if (event.immediateExternalWithdrawal) {
         event.externalAccountLabel?.let { "是（$it）" } ?: "是"
     } else {
@@ -287,7 +288,7 @@ private fun externalRows(data: PortfolioData, event: ExternalEvent): List<Pair<S
     rows += "方向" to if (event.direction == ExternalDirection.IN) "入金" else "出金"
     rows += "分类" to if (event.classification == ExternalClassification.CONSUMPTION) "消费" else "本金"
     rows += "账户" to positionLabel(data, event.position)
-    rows += "金额" to formatNative(event.amount, event.currency)
+    rows += "金额" to formatCashNative(event.amount, event.currency)
     event.counterpartyLabel?.let { rows += "外部账户" to it }
     return rows
 }
@@ -300,7 +301,7 @@ private fun expenseRows(
     val rows = mutableListOf<Pair<String, String>>()
     rows += "账户" to (event.position?.let { positionLabel(data, it) } ?: "非现金损耗")
     rows += "类别" to (categoryNames[event.categoryId] ?: event.categoryId)
-    rows += "金额" to signedNative(event.amount, event.currency)
+    rows += "金额" to signedCashNative(event.amount, event.currency)
     event.linkedTransferId?.let { rows += "关联转账" to it }
     return rows
 }
@@ -312,7 +313,12 @@ private fun openingRows(data: PortfolioData, event: OpeningEvent): List<Pair<Str
         rows += "数量" to quantityLabel(data, event.position, it)
     }
     event.amount?.let {
-        rows += "金额" to formatNative(it, currencyOf(data, event.position))
+        val formatted = if (isCashOf(data, event.position)) {
+            formatCashNative(it, currencyOf(data, event.position))
+        } else {
+            formatNative(it, currencyOf(data, event.position))
+        }
+        rows += "金额" to formatted
     }
     event.price?.let {
         rows += "单价" to formatNative(it, currencyOf(data, event.position))
@@ -324,10 +330,20 @@ private fun adjustmentRows(data: PortfolioData, event: AdjustmentEvent): List<Pa
     val rows = mutableListOf<Pair<String, String>>()
     rows += "持仓" to positionLabel(data, event.position)
     event.deltaQuantity?.let {
-        rows += "数量增减" to signedQuantity(it, unitOf(data, event.position))
+        val formatted = if (isCashOf(data, event.position)) {
+            signedCashQuantity(it, unitOf(data, event.position))
+        } else {
+            signedQuantity(it, unitOf(data, event.position))
+        }
+        rows += "数量增减" to formatted
     }
     event.deltaAmount?.let {
-        rows += "金额增减" to signedNative(it, currencyOf(data, event.position))
+        val formatted = if (isCashOf(data, event.position)) {
+            signedCashNative(it, currencyOf(data, event.position))
+        } else {
+            signedNative(it, currencyOf(data, event.position))
+        }
+        rows += "金额增减" to formatted
     }
     event.price?.let {
         rows += "单价" to formatNative(it, currencyOf(data, event.position))
@@ -350,11 +366,14 @@ private fun positionLabel(data: PortfolioData, ref: PositionRef): String {
 private fun quantityLabel(data: PortfolioData, ref: PositionRef, quantity: BigDecimal): String {
     val instrument = data.instrument(ref.instrumentId) ?: return formatQuantity(quantity)
     return if (instrument.kind == InstrumentKind.CASH) {
-        formatNative(quantity, instrument.currency)
+        formatCashNative(quantity, instrument.currency)
     } else {
         formatQuantity(quantity) + " " + instrument.unit
     }
 }
+
+private fun isCashOf(data: PortfolioData, ref: PositionRef): Boolean =
+    data.instrument(ref.instrumentId)?.kind == InstrumentKind.CASH
 
 private fun currencyOf(data: PortfolioData, ref: PositionRef): String =
     data.instrument(ref.instrumentId)?.currency ?: "CNY"

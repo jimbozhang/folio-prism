@@ -37,9 +37,34 @@ private fun exactText(value: BigDecimal): String {
     return exactFormat(v.scale().coerceAtLeast(0)).format(v)
 }
 
+/**
+ * Cash amounts are displayed bank-style: always exactly two decimal places,
+ * so a whole-amount balance renders as 4,350.00 instead of 4,350.
+ */
+private val cashFormat: NumberFormat = NumberFormat.getNumberInstance(Locale.CHINA).apply {
+    minimumFractionDigits = 2
+    maximumFractionDigits = 2
+}
+
+private fun cashText(value: BigDecimal): String = cashFormat.format(value)
+
 fun formatCny(value: BigDecimal?): String =
     if (value == null) "--"
     else "¥" + exactText(value)
+
+/** Cash amount in CNY, always with two decimal places. */
+fun formatCashCny(value: BigDecimal?): String =
+    if (value == null) "--"
+    else "¥" + cashText(value)
+
+/** Cash amount in the position's own currency, always two decimal places. */
+fun formatCashNative(value: BigDecimal?, currency: String): String {
+    if (value == null) return "--"
+    return currencyPrefix(currency) + cashText(value)
+}
+
+/** Plain padded number (no currency prefix) for cash amounts with a unit suffix. */
+fun formatCashNumber(value: BigDecimal): String = cashText(value)
 
 /**
  * Compact CNY amount for chart annotations: 亿 / 万 units keep labels short
@@ -65,12 +90,13 @@ fun formatCnyCompact(value: BigDecimal?): String {
 
 fun formatNative(value: BigDecimal?, currency: String): String {
     if (value == null) return "--"
-    val prefix = when (currency.uppercase()) {
-        "USD" -> "$"
-        "HKD" -> "HK$"
-        else -> "¥"
-    }
-    return prefix + exactText(value)
+    return currencyPrefix(currency) + exactText(value)
+}
+
+private fun currencyPrefix(currency: String): String = when (currency.uppercase()) {
+    "USD" -> "$"
+    "HKD" -> "HK$"
+    else -> "¥"
 }
 
 fun formatPercent(fraction: BigDecimal?): String {

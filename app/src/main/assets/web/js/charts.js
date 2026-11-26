@@ -4,6 +4,10 @@ const ChartsView = (() => {
   let requestSeq = 0;
   // View options of the asset charts: adjusted curve and flow markers.
   let historyView = { adjusted: false, markers: false };
+  // Which category-pnl row is expanded, keyed by range so it resets on a
+  // new range. Pure view state: toggling never triggers a data fetch.
+  let pnlExpandedRange = null;
+  let pnlExpandedId = null;
 
   const TYPES = [
     // 总资产页内置类别切换：未选类别时显示全组合，选中类别时只统计该类别。
@@ -205,7 +209,7 @@ const ChartsView = (() => {
         return;
       }
       if (current.key === 'category_pnl') {
-        this.renderCategoryPnl(content, data);
+        this.renderCategoryPnl(content, state, data);
         return;
       }
       if (current.key === 'dividends') {
@@ -330,7 +334,7 @@ const ChartsView = (() => {
       }
     },
 
-    renderCategoryPnl(content, data) {
+    renderCategoryPnl(content, state, data) {
       this.mount(content, {
         type: 'bar',
         data: {
@@ -348,11 +352,85 @@ const ChartsView = (() => {
         },
         options: barOptions('盈亏', true),
       });
-      const rows = data.categoryPnl.map(function (item) {
-        return [item.name, item.pnlCny === null ? '--' : Fmt.cny(item.pnlCny),
-          item.incomplete ? '数据不完整' : ''];
+
+      // Tapping a category row expands a card with that category's per
+      // instrument P&L for the same range. The expansion is pure DOM state,
+      // so toggling never re-fetches chart data.
+      const byCat = {};
+      (data.instrumentPnl || []).forEach(function (item) {
+        (byCat[item.categoryId] = byCat[item.categoryId] || []).push(item);
       });
-      content.appendChild(table(['类别', '盈亏'], rows, [false, true]));
+      const rangeKey = state.charts.ranges['category_pnl'] || defaultRange('category_pnl');
+      if (pnlExpandedRange !== rangeKey) {
+        pnlExpandedRange = rangeKey;
+        pnlExpandedId = null;
+      }
+
+      const sortDesc = function (a, b) {
+        const pa = Fmt.num(a.pnlCny);
+        const pb = Fmt.num(b.pnlCny);
+        if ((pa === null) !== (pb === null)) return pa === null ? 1 : -1;
+        return (pb || 0) - (pa || 0);
+      };
+
+      const list = el('div', 'pnl-list');
+      const rows = [];
+      data.categoryPnl.slice().sort(sortDesc).forEach(function (item) {
+        const value = Fmt.num(item.pnlCny);
+        const startValue = Fmt.num(item.startValue);
+        const share = value !== null && startValue > 0 ? value / startValue : null;
+        const row = el('div', 'pnl-row' + (pnlExpandedId === item.id ? ' open' : ''));
+        const name = el('span', 'pnl-name', item.name);
+        if (share !== null) name.appendChild(el('span', 'pnl-share', Fmt.percent(share, 1)));
+        row.appendChild(name);
+        row.appendChild(el('span',
+          'pnl-amount ' + (value === null ? 'muted' : value >= 0 ? 'pos' : 'neg'),
+          item.pnlCny === null ? '--' : Fmt.cny(item.pnlCny)));
+        row.appendChild(el('span', 'caret', '▾'));
+
+        const card = el('div', 'pnl-card');
+        const items = (byCat[item.id] || []).slice().sort(sortDesc);
+        if (item.incomplete) {
+          card.appendChild(el('div', 'pnl-note warn', '类别数据不完整（缺少历史价格）'));
+        }
+        if (items.length === 0) {
+          card.appendChild(el('div', 'pnl-note', '该类别暂无标的明细'));
+        } else {
+          items.forEach(function (inst, index) {
+            if (index > 0) card.appendChild(el('div', 'pnl-sep'));
+            const ivalue = Fmt.num(inst.pnlCny);
+            const ishare = ivalue !== null && Fmt.num(inst.startValue) > 0
+              ? ivalue / Fmt.num(inst.startValue) : null;
+            const line = el('div', 'pnl-inst');
+            line.appendChild(el('span', 'pnl-inst-name', inst.name));
+            const meta = el('div', 'pnl-inst-meta');
+            if (inst.code) meta.appendChild(el('span', 'pnl-inst-code', inst.code));
+            if (ishare !== null) {
+              if (inst.code) meta.appendChild(el('span', 'pnl-inst-sep-dot', '·'));
+              meta.appendChild(el('span', 'pnl-inst-share', Fmt.percent(ishare, 1)));
+            }
+            meta.appendChild(el('span',
+              'pnl-inst-amount ' + (ivalue === null ? 'muted' : ivalue >= 0 ? 'pos' : 'neg'),
+              inst.pnlCny === null ? '--' : Fmt.cny(inst.pnlCny)));
+            line.appendChild(meta);
+            if (inst.incomplete) {
+              line.appendChild(el('span', 'pnl-inst-incomplete', '数据不完整（缺少历史价格）'));
+            }
+            card.appendChild(line);
+          });
+        }
+
+        row.addEventListener('click', function () {
+          pnlExpandedId = row.classList.contains('open') ? null : item.id;
+          rows.forEach(function (entry) {
+            entry.el.classList.toggle('open', entry.id === pnlExpandedId);
+          });
+        });
+        rows.push({ id: item.id, el: row });
+        list.appendChild(row);
+        list.appendChild(card);
+      });
+      content.appendChild(list);
     },
 
     renderFlows(content, data) {

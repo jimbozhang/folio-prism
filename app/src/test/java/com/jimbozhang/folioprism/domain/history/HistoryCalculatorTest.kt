@@ -17,11 +17,14 @@ import com.jimbozhang.folioprism.domain.model.ExpenseEvent
 import com.jimbozhang.folioprism.domain.model.ExternalClassification
 import com.jimbozhang.folioprism.domain.model.ExternalDirection
 import com.jimbozhang.folioprism.domain.model.ExternalEvent
+import com.jimbozhang.folioprism.domain.model.IncomeEvent
+import com.jimbozhang.folioprism.domain.model.IncomeKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.QuoteConfig
 import com.jimbozhang.folioprism.domain.model.QuoteMode
 import com.jimbozhang.folioprism.domain.money.bd
 import com.jimbozhang.folioprism.domain.calc.HistoryCalculator
+import java.math.BigDecimal
 import java.time.LocalDate
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -218,6 +221,128 @@ class HistoryCalculatorTest {
         val growth = result.categoryPnl.first { it.categoryId == CategoryIds.GROWTH }
 
         assertDecimal("28", growth.pnlCny)
+    }
+
+    @Test
+    fun sameCategoryTransferLossIsNotDoubleCounted() {
+        val fundA = quotedInstrument("ins_fund_a", CategoryIds.GROWTH, code = "008163")
+        val fundB = quotedInstrument("ins_fund_b", CategoryIds.GROWTH, code = "007028")
+        val data = portfolio(
+            instruments = listOf(fundA, fundB),
+            events = listOf(
+                opening(
+                    ref(INST_A, "ins_fund_a"),
+                    quantity = "10",
+                    price = "10",
+                    date = "2026-01-01T00:00:00+08:00",
+                ),
+                transfer(
+                    from = ref(INST_A, "ins_fund_a"),
+                    to = ref(INST_A, "ins_fund_b"),
+                    fromQuantity = "10",
+                    toQuantity = "9",
+                    fromPrice = "10",
+                    toPrice = "10",
+                    loss = "10",
+                    date = "2026-01-10T00:00:00+08:00",
+                ),
+            ),
+        )
+        val cache = PriceCacheData(
+            quotes = mapOf(
+                "ins_fund_a" to CachedSeries(
+                    auto = buildMap {
+                        put("2026-01-01", "10")
+                        put("2026-01-31", "10")
+                    },
+                ),
+                "ins_fund_b" to CachedSeries(
+                    auto = buildMap {
+                        put("2026-01-01", "10")
+                        put("2026-01-31", "10")
+                    },
+                ),
+            ),
+        )
+        val result = HistoryCalculator.build(data, cache, emptyMap(), from, to)
+        val growth = result.categoryPnl.first { it.categoryId == CategoryIds.GROWTH }
+
+        // The 10 fee shows up once, as the category's value drop (100 -> 90);
+        // it must not be subtracted a second time from the category P&L.
+        assertDecimal("-10", growth.pnlCny)
+
+        // The instruments of the category sum to the category P&L: fund_a
+        // breaks even (fully redeemed) and fund_b carries the -10 loss.
+        val sum = result.instrumentPnl
+            .filter { it.categoryId == CategoryIds.GROWTH }
+            .map { it.pnlCny ?: BigDecimal.ZERO }
+            .fold(BigDecimal.ZERO) { acc, value -> acc.add(value) }
+        assertDecimal("-10", sum)
+    }
+
+    @Test
+    fun crossCategoryTransferLossLandsOnDestinationInstrument() {
+        val buyTransfer = transfer(
+            from = ref(INST_A, CASH_CNY),
+            to = ref(INST_A, FUND),
+            fromQuantity = "100",
+            toQuantity = "9",
+            toPrice = "10",
+            date = "2026-01-10T00:00:00+08:00",
+        ).copy(lossAmount = bd("10"))
+        val events = baseEvents() + buyTransfer
+        val result = HistoryCalculator.build(data(events), cache(), emptyMap(), from, to)
+        val growth = result.categoryPnl.first { it.categoryId == CategoryIds.GROWTH }
+        val fund = result.instrumentPnl.first { it.instrumentId == FUND }
+
+        // The embedded fee is attributed to the destination instrument, so it
+        // matches the category P&L exactly.
+        assertDecimal("28", growth.pnlCny)
+        assertDecimal("28", fund.pnlCny)
+    }
+
+    @Test
+    fun incomeCreditsSourceInstrument() {
+        val events = baseEvents() + IncomeEvent(
+            kind = IncomeKind.DIVIDEND,
+            source = ref(INST_A, FUND),
+            destination = ref(INST_A, CASH_CNY),
+            amount = bd("100"),
+            currency = "CNY",
+            date = "2026-01-10T00:00:00+08:00",
+        )
+        val result = HistoryCalculator.build(data(events), cache(), emptyMap(), from, to)
+        val fund = result.instrumentPnl.first { it.instrumentId == FUND }
+        val cash = result.instrumentPnl.first { it.instrumentId == CASH_CNY }
+        val growth = result.categoryPnl.first { it.categoryId == CategoryIds.GROWTH }
+        val cashCategory = result.categoryPnl.first { it.categoryId == CategoryIds.CASH }
+
+        // The 100 dividend is income generated by the fund: it is a gain on the
+        // fund (20 market gain + 100 dividend) and a zero-P&L receipt on the
+        // cash. Both match the category-level P&L.
+        assertDecimal("120", fund.pnlCny)
+        assertDecimal("0", cash.pnlCny)
+        assertDecimal("120", growth.pnlCny)
+        assertDecimal("0", cashCategory.pnlCny)
+    }
+
+    @Test
+    fun interestWithoutSourceCreditsDestinationInstrument() {
+        val events = baseEvents() + IncomeEvent(
+            kind = IncomeKind.INTEREST,
+            destination = ref(INST_A, CASH_CNY),
+            amount = bd("3.1"),
+            currency = "CNY",
+            date = "2026-01-10T00:00:00+08:00",
+        )
+        val result = HistoryCalculator.build(data(events), cache(), emptyMap(), from, to)
+        val cash = result.instrumentPnl.first { it.instrumentId == CASH_CNY }
+        val cashCategory = result.categoryPnl.first { it.categoryId == CategoryIds.CASH }
+
+        // Interest credited to cash with no source instrument is a P&L gain on
+        // the cash, matching the category level which records no flow for it.
+        assertDecimal("3.1", cash.pnlCny)
+        assertDecimal("3.1", cashCategory.pnlCny)
     }
 
     @Test

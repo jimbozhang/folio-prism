@@ -301,6 +301,70 @@ button { font: inherit; }
 .pos-sub { font-size: 11px; color: var(--muted); }
 .pos-missing { color: var(--coral); }
 
+/* 类别盈亏：点击类别展开该类别的标的明细卡片 */
+.pnl-list { margin-top: 14px; border-top: 1px solid var(--divider); }
+.pnl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 4px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--divider);
+}
+/* the last row sits above its (always present) card, so it is nth-last-child(2) */
+.pnl-row:nth-last-child(2) { border-bottom: none; }
+.pnl-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.pnl-share { font-size: 12px; font-weight: 400; color: var(--muted); }
+.pnl-amount { font-weight: 600; font-variant-numeric: tabular-nums; }
+.pnl-amount.pos, .pnl-inst-amount.pos { color: var(--coral); }
+.pnl-amount.neg, .pnl-inst-amount.neg { color: var(--green); }
+.pnl-amount.muted, .pnl-inst-amount.muted { color: var(--muted); font-weight: 400; }
+.pnl-row .caret { flex: none; color: var(--muted); transition: transform 0.15s; }
+.pnl-row.open .caret { transform: rotate(180deg); }
+
+.pnl-card {
+  display: none;
+  margin: 6px 0 10px 10px;
+  padding: 2px 0;
+  background: #f4f5f4;
+  border-radius: 10px;
+}
+.pnl-row.open + .pnl-card { display: block; }
+.pnl-inst {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 14px;
+}
+.pnl-sep { border-top: 1px solid var(--divider); }
+.pnl-inst-name { font-size: 14px; }
+.pnl-inst-meta {
+  display: flex;
+  align-items: baseline;
+  margin-top: 2px;
+}
+.pnl-inst-code { font-size: 11px; color: var(--muted); }
+.pnl-inst-sep-dot { font-size: 11px; color: var(--muted); margin: 0 6px; }
+.pnl-inst-incomplete { font-size: 11px; color: var(--coral); margin-top: 2px; }
+.pnl-inst-share { font-size: 12px; color: var(--muted); }
+.pnl-inst-amount {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+.pnl-note { padding: 8px 14px; font-size: 12px; color: var(--muted); }
+.pnl-note.warn { color: var(--coral); }
+.pnl-note + .pnl-inst { border-top: 1px solid var(--divider); }
+
 .dist-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .dist-row {
   display: grid;

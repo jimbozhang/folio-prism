@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CurrencyExchange
 import androidx.compose.material.icons.outlined.Diamond
+import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -88,10 +89,12 @@ import com.jimbozhang.folioprism.domain.history.CategoryPnl
 import com.jimbozhang.folioprism.domain.history.DailyFlow
 import com.jimbozhang.folioprism.domain.history.DateRange
 import com.jimbozhang.folioprism.domain.history.DailyPortfolioValue
+import com.jimbozhang.folioprism.domain.history.InstrumentPnl
 import com.jimbozhang.folioprism.domain.model.Category
 import com.jimbozhang.folioprism.domain.model.CategoryIds
 import com.jimbozhang.folioprism.domain.model.ExternalDirection
 import com.jimbozhang.folioprism.domain.model.ExternalEvent
+import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.domain.model.PortfolioData
 import com.jimbozhang.folioprism.domain.model.instrument
 import com.jimbozhang.folioprism.domain.money.toCnyAmount
@@ -101,7 +104,9 @@ import com.jimbozhang.folioprism.ui.components.DateRangePickerDialog
 import com.jimbozhang.folioprism.ui.components.HoldingRow
 import com.jimbozhang.folioprism.ui.components.RangeArrowButton
 import com.jimbozhang.folioprism.ui.components.formatCny
+import com.jimbozhang.folioprism.ui.components.formatCashCny
 import com.jimbozhang.folioprism.ui.components.formatPercent
+import com.jimbozhang.folioprism.ui.components.formatQuantity
 import com.jimbozhang.folioprism.ui.theme.FolioBackground
 import com.jimbozhang.folioprism.ui.theme.FolioBlue
 import com.jimbozhang.folioprism.ui.theme.FolioCoral
@@ -149,9 +154,18 @@ private data class MonthFlow(
 )
 
 private data class DistributionRowData(
+    val id: String,
     val name: String,
     val value: BigDecimal,
     val color: Color,
+)
+
+private data class InstitutionHolding(
+    val name: String,
+    val quantity: BigDecimal,
+    val unit: String,
+    val valueCny: BigDecimal?,
+    val isCash: Boolean,
 )
 
 private val dateRangeSaver = listSaver<DateRange, Long>(
@@ -223,6 +237,9 @@ fun ChartsScreen(
     }
     val institutionRows = remember(snapshot.brokerValues, data.institutions) {
         institutionRows(snapshot, data)
+    }
+    val institutionHoldings = remember(positions, snapshot.positionValues, data.instruments) {
+        holdingsByInstitution(data, positions, snapshot.positionValues)
     }
     val currencyRows = remember(snapshot.currencyValues) { currencyRows(snapshot) }
 
@@ -326,6 +343,7 @@ fun ChartsScreen(
                     title = "机构分布",
                     rows = institutionRows,
                     total = snapshot.totalValueCny,
+                    holdings = institutionHoldings,
                 )
 
                 ChartType.CURRENCIES -> distributionContent(
@@ -764,7 +782,14 @@ private fun LazyListScope.categoryPnlContent(
                     ?.get(row.categoryId)
             }
             item { BigPnlHeader("类别盈亏合计", totalPnl, incomplete) }
-            item { CategoryPnlBlock(pnl, startValues) }
+            item {
+                CategoryPnlBlock(
+                    rows = pnl,
+                    startValues = startValues,
+                    instruments = ready.result.instrumentPnl,
+                    range = range,
+                )
+            }
         }
 
         historyState is HistoryUiState.Error -> item { ErrorBlock(historyState.message, onRetry) }
@@ -781,7 +806,7 @@ private fun LazyListScope.flowsContent(monthly: List<MonthFlow>) {
     item {
         BigValueHeader(
             label = "区间净投入",
-            value = formatCny(net),
+            value = formatCashCny(net),
             color = if (net.signum() < 0) FolioGreen else FolioInk,
         )
     }
@@ -790,11 +815,11 @@ private fun LazyListScope.flowsContent(monthly: List<MonthFlow>) {
             EmptyBlock("所选区间内没有外部本金流入/流出事件。")
         } else {
             WhiteBlock {
-                SummaryLine("累计投入", formatCny(inflow))
+                SummaryLine("累计投入", formatCashCny(inflow))
                 HorizontalDivider(color = FolioDivider)
-                SummaryLine("累计取出", formatCny(outflow))
+                SummaryLine("累计取出", formatCashCny(outflow))
                 HorizontalDivider(color = FolioDivider)
-                SummaryLine("净投入", formatCny(net), emphasize = true)
+                SummaryLine("净投入", formatCashCny(net), emphasize = true)
                 monthly.asReversed().forEach { flow ->
                     HorizontalDivider(color = FolioDivider)
                     FlowRowItem(flow)
@@ -819,7 +844,7 @@ private fun LazyListScope.dividendsContent(
     item {
         BigValueHeader(
             label = "区间分红合计",
-            value = formatCny(stats.totalCny),
+            value = formatCashCny(stats.totalCny),
             color = FolioInk,
         )
     }
@@ -832,15 +857,15 @@ private fun LazyListScope.dividendsContent(
             SummaryLine("分红笔数", "${stats.count} 笔")
             HorizontalDivider(color = FolioDivider)
             stats.averagePerMonthCny?.let { average ->
-                SummaryLine("月均分红", formatCny(average))
+                SummaryLine("月均分红", formatCashCny(average))
                 HorizontalDivider(color = FolioDivider)
             }
             stats.largest?.let { largest ->
-                SummaryLine("单笔最大", "${formatCny(largest.amountCny)} · ${shortDate(largest.date)}")
+                SummaryLine("单笔最大", "${formatCashCny(largest.amountCny)} · ${shortDate(largest.date)}")
                 HorizontalDivider(color = FolioDivider)
             }
             stats.latest?.let { latest ->
-                SummaryLine("最近一笔", "${shortDate(latest.date)} · ${formatCny(latest.amountCny)}")
+                SummaryLine("最近一笔", "${shortDate(latest.date)} · ${formatCashCny(latest.amountCny)}")
             }
             if (stats.incomplete) {
                 HorizontalDivider(color = FolioDivider)
@@ -963,7 +988,7 @@ private fun DividendBarRowItem(row: DividendBarRow, total: BigDecimal) {
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = formatCny(row.amountCny),
+                text = formatCashCny(row.amountCny),
                 style = MaterialTheme.typography.titleSmall,
                 color = FolioInk,
             )
@@ -1353,17 +1378,33 @@ private fun LazyListScope.distributionContent(
     title: String,
     rows: List<DistributionRowData>,
     total: BigDecimal,
+    holdings: Map<String, List<InstitutionHolding>>? = null,
 ) {
     item {
         if (rows.isEmpty()) {
             EmptyBlock("暂无$title 数据。")
         } else {
+            // Which row is expanded; only used when drill-down details exist.
+            var expandedId by remember { mutableStateOf<String?>(null) }
             WhiteBlock {
                 rows.forEachIndexed { index, row ->
                     if (index > 0) {
                         HorizontalDivider(color = FolioDivider)
                     }
-                    DistributionRowItem(row, total)
+                    val detail = holdings?.get(row.id)?.takeIf { it.isNotEmpty() }
+                    val expanded = expandedId == row.id
+                    DistributionRowItem(
+                        row = row,
+                        total = total,
+                        detail = detail,
+                        expanded = expanded,
+                        onToggle = {
+                            expandedId = if (expanded) null else row.id
+                        },
+                    )
+                    if (expanded && detail != null) {
+                        InstitutionHoldingsCard(detail)
+                    }
                 }
             }
         }
@@ -1414,7 +1455,7 @@ private fun HistorySummary(
     val marketPnl = change?.subtract(netFlow)
     val flowLabel = if (categoryId == null) "出入金" else "资金流"
     val flowSub = if (categoryId == null) {
-        "入金 ${formatCny(inflow)} · 出金 ${formatCny(outflow)}"
+        "入金 ${formatCashCny(inflow)} · 出金 ${formatCashCny(outflow)}"
     } else {
         "流入 ${formatCny(inflow)} · 流出 ${formatCny(outflow)}"
     }
@@ -1430,7 +1471,11 @@ private fun HistorySummary(
             Spacer(modifier = Modifier.height(4.dp))
             SummaryLine("期初", formatCny(start))
             HorizontalDivider(color = FolioDivider)
-            SummaryLine(flowLabel, formatCny(netFlow), sub = flowSub)
+            SummaryLine(
+                label = flowLabel,
+                value = if (categoryId == null) formatCashCny(netFlow) else formatCny(netFlow),
+                sub = flowSub,
+            )
             HorizontalDivider(color = FolioDivider)
             SummaryLine(
                 label = "市场盈亏",
@@ -1788,7 +1833,12 @@ private fun BigValueHeader(label: String, value: String, color: Color) {
 }
 
 @Composable
-private fun CategoryPnlBlock(rows: List<CategoryPnl>, startValues: Map<String, BigDecimal?>) {
+private fun CategoryPnlBlock(
+    rows: List<CategoryPnl>,
+    startValues: Map<String, BigDecimal?>,
+    instruments: List<InstrumentPnl>,
+    range: DateRange,
+) {
     val sorted = rows.sortedWith(
         compareBy<CategoryPnl> { it.pnlCny == null }
             .thenByDescending { it.pnlCny ?: BigDecimal.ZERO },
@@ -1807,13 +1857,30 @@ private fun CategoryPnlBlock(rows: List<CategoryPnl>, startValues: Map<String, B
     } else {
         0.5f
     }
+    // Which category row is expanded; reset whenever the range changes.
+    var expandedId by remember(range) { mutableStateOf<String?>(null) }
+    val instrumentsByCategory = remember(instruments) {
+        instruments.groupBy { it.categoryId }
+    }
 
     WhiteBlock {
         sorted.forEachIndexed { index, row ->
             if (index > 0) {
                 HorizontalDivider(modifier = Modifier.padding(start = 16.dp), color = FolioDivider)
             }
-            CategoryPnlRow(row, maxGain, maxLoss, zeroFraction, startValues[row.categoryId])
+            val expanded = expandedId == row.categoryId
+            CategoryPnlRow(
+                pnl = row,
+                maxGain = maxGain,
+                maxLoss = maxLoss,
+                zeroFraction = zeroFraction,
+                startValue = startValues[row.categoryId],
+                expanded = expanded,
+                onToggle = { expandedId = if (expanded) null else row.categoryId },
+            )
+            if (expanded) {
+                InstrumentPnlCard(instrumentsByCategory[row.categoryId].orEmpty())
+            }
         }
     }
 }
@@ -1825,6 +1892,8 @@ private fun CategoryPnlRow(
     maxLoss: BigDecimal,
     zeroFraction: Float,
     startValue: BigDecimal?,
+    expanded: Boolean,
+    onToggle: () -> Unit,
 ) {
     val value = pnl.pnlCny
     val color = pnlColor(value)
@@ -1839,7 +1908,8 @@ private fun CategoryPnlRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 13.dp),
+            .padding(horizontal = 16.dp, vertical = 13.dp)
+            .clickable(onClick = onToggle),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -1936,6 +2006,115 @@ private fun CategoryPnlRow(
             style = MaterialTheme.typography.titleSmall,
             color = color,
         )
+        Spacer(modifier = Modifier.width(6.dp))
+        Icon(
+            imageVector = if (expanded) {
+                Icons.Outlined.ExpandLess
+            } else {
+                Icons.Outlined.ExpandMore
+            },
+            contentDescription = if (expanded) "收起标的明细" else "展开标的明细",
+            tint = FolioMuted,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+@Composable
+private fun InstrumentPnlCard(rows: List<InstrumentPnl>) {
+    val sorted = rows.sortedWith(
+        compareBy<InstrumentPnl> { it.pnlCny == null }
+            .thenByDescending { it.pnlCny ?: BigDecimal.ZERO },
+    )
+    Column(
+        modifier = Modifier
+            .padding(start = 48.dp, end = 16.dp, top = 2.dp, bottom = 14.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFFF5F5F5)),
+    ) {
+        if (sorted.isEmpty()) {
+            Text(
+                text = "该类别暂无标的明细",
+                style = MaterialTheme.typography.bodySmall,
+                color = FolioMuted,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            )
+        } else {
+            sorted.forEachIndexed { index, row ->
+                if (index > 0) {
+                    HorizontalDivider(color = FolioDivider)
+                }
+                InstrumentPnlRow(row)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InstrumentPnlRow(item: InstrumentPnl) {
+    val value = item.pnlCny
+    val color = pnlColor(value)
+    // Range return of this instrument: P&L over its value at the range start,
+    // the same denominator convention as the category row above.
+    val share = if (value != null && item.startValue != null &&
+        item.startValue.signum() > 0
+    ) {
+        value.divide(item.startValue, 6, java.math.RoundingMode.HALF_UP)
+    } else {
+        null
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = item.name,
+            style = MaterialTheme.typography.bodyMedium,
+            color = FolioInk,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (item.code.isNotEmpty()) {
+                Text(
+                    text = item.code,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FolioMuted,
+                )
+                if (share != null) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "·",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FolioMuted,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
+            }
+            if (share != null) {
+                Text(
+                    text = formatPercent(share),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioMuted,
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                text = formatCny(value),
+                style = MaterialTheme.typography.labelLarge,
+                color = color,
+            )
+        }
+        if (item.incomplete) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "数据不完整（缺少历史价格）",
+                style = MaterialTheme.typography.labelSmall,
+                color = FolioCoral,
+            )
+        }
     }
 }
 
@@ -1956,13 +2135,13 @@ private fun FlowRowItem(flow: MonthFlow) {
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "投入 ${formatCny(flow.inflow)} · 取出 ${formatCny(flow.outflow)}",
+                text = "投入 ${formatCashCny(flow.inflow)} · 取出 ${formatCashCny(flow.outflow)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = FolioMuted,
             )
         }
         Text(
-            text = formatCny(net),
+            text = formatCashCny(net),
             style = MaterialTheme.typography.titleSmall,
             color = if (net.signum() < 0) FolioGreen else FolioInk,
         )
@@ -1970,13 +2149,29 @@ private fun FlowRowItem(flow: MonthFlow) {
 }
 
 @Composable
-private fun DistributionRowItem(row: DistributionRowData, total: BigDecimal) {
+private fun DistributionRowItem(
+    row: DistributionRowData,
+    total: BigDecimal,
+    detail: List<InstitutionHolding>?,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
     val share = if (total.signum() > 0) {
         row.value.divide(total, 6, java.math.RoundingMode.HALF_UP)
     } else {
         BigDecimal.ZERO
     }
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp)) {
+    Column(
+        modifier = Modifier
+            .padding(horizontal = 16.dp, vertical = 13.dp)
+            .then(
+                if (detail != null) {
+                    Modifier.clickable(onClick = onToggle)
+                } else {
+                    Modifier
+                },
+            ),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -1992,6 +2187,8 @@ private fun DistributionRowItem(row: DistributionRowData, total: BigDecimal) {
                 text = row.name,
                 style = MaterialTheme.typography.bodyLarge,
                 color = FolioInk,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
             Text(
@@ -2005,6 +2202,15 @@ private fun DistributionRowItem(row: DistributionRowData, total: BigDecimal) {
                 style = MaterialTheme.typography.bodySmall,
                 color = FolioMuted,
             )
+            if (detail != null) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Icon(
+                    imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = if (expanded) "收起标的明细" else "展开标的明细",
+                    tint = FolioMuted,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
         Spacer(modifier = Modifier.height(7.dp))
         Box(
@@ -2020,6 +2226,90 @@ private fun DistributionRowItem(row: DistributionRowData, total: BigDecimal) {
                     .fillMaxHeight()
                     .background(row.color),
             )
+        }
+    }
+}
+
+/**
+ * Drill-down card below an expanded 机构分布 row: each position held at this
+ * institution with its quantity (in the instrument's own unit) and current
+ * CNY value. Unlike the 类别盈亏 card, this shows holdings, not P&L, and
+ * amounts stay neutral; cash rows carry no quantity, only the value.
+ */
+@Composable
+private fun InstitutionHoldingsCard(holdings: List<InstitutionHolding>) {
+    Column(
+        modifier = Modifier
+            .padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 14.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFFF5F5F5)),
+    ) {
+        holdings.forEachIndexed { index, holding ->
+            if (index > 0) {
+                HorizontalDivider(color = FolioDivider)
+            }
+            InstitutionHoldingRow(holding)
+        }
+    }
+}
+
+@Composable
+private fun InstitutionHoldingRow(holding: InstitutionHolding) {
+    if (holding.isCash) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = holding.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = FolioInk,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                text = formatCashCny(holding.valueCny),
+                style = MaterialTheme.typography.labelLarge,
+                color = FolioInk,
+            )
+        }
+    } else {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        ) {
+            Text(
+                text = holding.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = FolioInk,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = formatQuantity(holding.quantity) + " " + holding.unit,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = formatCny(holding.valueCny),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = FolioInk,
+                )
+            }
         }
     }
 }
@@ -2083,7 +2373,9 @@ private fun WhiteBlock(content: @Composable androidx.compose.foundation.layout.C
         shape = RoundedCornerShape(16.dp),
         color = Color.White,
     ) {
-        Column(content = content)
+        Column(
+            content = content,
+        )
     }
 }
 
@@ -2219,16 +2511,49 @@ private fun institutionRows(
         Color(0xFFB2BEC3),
     )
     // Institutions without any current value are noise in the distribution.
-    return snapshot.brokerValues
+    val withNames = snapshot.brokerValues
         .filter { (_, value) -> value.signum() != 0 }
         .map { (id, value) ->
             val institution = data.institutions.firstOrNull { it.id == id }
             val name = institution?.chartAlias ?: institution?.name ?: id
-            name to value
+            Triple(id, name, value)
         }
-        .sortedByDescending { it.second }
-        .mapIndexed { index, (name, value) ->
-            DistributionRowData(name, value, palette[index % palette.size])
+        .sortedByDescending { it.third }
+    return withNames.mapIndexed { index, (id, name, value) ->
+        DistributionRowData(id, name, value, palette[index % palette.size])
+    }
+}
+
+/**
+ * Per-institution position detail for the 机构分布 drill-down: each held
+ * instrument with its quantity (in the instrument's own unit) and current
+ * CNY value. Zero-quantity positions are noise; cash positions carry no
+ * quantity display, only their value.
+ */
+private fun holdingsByInstitution(
+    data: PortfolioData,
+    positions: Map<PositionKey, BigDecimal>,
+    positionValues: Map<PositionKey, BigDecimal?>,
+): Map<String, List<InstitutionHolding>> {
+    return positions
+        .filter { (_, quantity) -> quantity.signum() != 0 }
+        .mapNotNull { (key, quantity) ->
+            val instrument = data.instrument(key.instrumentId) ?: return@mapNotNull null
+            key.institutionId to InstitutionHolding(
+                name = instrument.name,
+                quantity = quantity,
+                unit = instrument.unit,
+                valueCny = positionValues[key],
+                isCash = instrument.kind == InstrumentKind.CASH,
+            )
+        }
+        .groupBy { it.first }
+        .mapValues { (_, pairs) ->
+            pairs.map { it.second }
+                .sortedWith(
+                    compareBy<InstitutionHolding> { it.valueCny == null }
+                        .thenByDescending { it.valueCny ?: BigDecimal.ZERO },
+                )
         }
 }
 
@@ -2250,7 +2575,7 @@ private fun currencyRows(snapshot: PortfolioSnapshot): List<DistributionRowData>
                 "PHYSICAL_GOLD" -> "实物黄金"
                 else -> currency
             }
-            DistributionRowData(name, value, colors[currency] ?: FolioMuted)
+            DistributionRowData(currency, name, value, colors[currency] ?: FolioMuted)
         }
         .sortedByDescending { it.value }
 }

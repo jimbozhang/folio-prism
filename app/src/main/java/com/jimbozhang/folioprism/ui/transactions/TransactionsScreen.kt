@@ -70,6 +70,8 @@ import com.jimbozhang.folioprism.domain.money.toMoneyAmount
 import com.jimbozhang.folioprism.domain.quote.QuoteSnapshot
 import com.jimbozhang.folioprism.domain.model.Instrument
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
+import com.jimbozhang.folioprism.ui.components.formatCashNative
+import com.jimbozhang.folioprism.ui.components.formatCashNumber
 import com.jimbozhang.folioprism.ui.components.formatNative
 import com.jimbozhang.folioprism.ui.components.formatQuantity
 import com.jimbozhang.folioprism.ui.theme.FolioBlue
@@ -575,7 +577,7 @@ internal fun eventAmount(data: PortfolioData, event: Event): String = when (even
         when {
             instrument == null -> "--"
             instrument.kind == InstrumentKind.CASH ->
-                formatNative(event.toQuantity, instrument.currency)
+                formatCashNative(event.toQuantity, instrument.currency)
             event.toPrice != null ->
                 formatNative(
                     event.toQuantity.multiply(event.toPrice).toMoneyAmount(),
@@ -585,34 +587,46 @@ internal fun eventAmount(data: PortfolioData, event: Event): String = when (even
         }
     }
 
-    is IncomeEvent -> "+" + formatNative(event.amount, event.currency)
+    is IncomeEvent -> "+" + formatCashNative(event.amount, event.currency)
 
     is ExternalEvent -> {
         val sign = if (event.direction == ExternalDirection.IN) "+" else "-"
-        sign + formatNative(event.amount.abs(), event.currency)
+        sign + formatCashNative(event.amount.abs(), event.currency)
     }
 
     is ExpenseEvent -> {
         val sign = if (event.amount.signum() >= 0) "-" else "+"
-        sign + formatNative(event.amount.abs(), event.currency)
+        sign + formatCashNative(event.amount.abs(), event.currency)
     }
 
     is OpeningEvent -> {
         val instrument = data.instrument(event.position.instrumentId)
         val unit = instrument?.unit ?: "份"
-        event.quantity?.let { formatQuantity(it) + " " + unit }
-            ?: event.amount?.let { formatNative(it, instrument?.currency ?: "CNY") }
+        val isCash = instrument?.kind == InstrumentKind.CASH
+        event.quantity?.let { quantity ->
+            (if (isCash) formatCashNumber(quantity) else formatQuantity(quantity)) + " " + unit
+        }
+            ?: event.amount?.let { amount ->
+                if (isCash) {
+                    formatCashNative(amount, instrument.currency)
+                } else {
+                    formatNative(amount, instrument?.currency ?: "CNY")
+                }
+            }
             ?: "--"
     }
 
     is AdjustmentEvent -> {
         val instrument = data.instrument(event.position.instrumentId)
         val unit = instrument?.unit ?: "份"
+        val isCash = instrument?.kind == InstrumentKind.CASH
         when {
             event.deltaQuantity != null ->
-                signedQuantity(event.deltaQuantity, unit)
+                if (isCash) signedCashQuantity(event.deltaQuantity, unit)
+                else signedQuantity(event.deltaQuantity, unit)
             event.deltaAmount != null ->
-                signedNative(event.deltaAmount, instrument?.currency ?: "CNY")
+                if (isCash) signedCashNative(event.deltaAmount, instrument?.currency ?: "CNY")
+                else signedNative(event.deltaAmount, instrument?.currency ?: "CNY")
             else -> "--"
         }
     }
@@ -669,6 +683,12 @@ internal fun signedNative(value: BigDecimal, currency: String): String =
 
 internal fun signedQuantity(value: BigDecimal, unit: String): String =
     (if (value.signum() < 0) "-" else "+") + formatQuantity(value.abs()) + " " + unit
+
+internal fun signedCashQuantity(value: BigDecimal, unit: String): String =
+    (if (value.signum() < 0) "-" else "+") + formatCashNumber(value.abs()) + " " + unit
+
+internal fun signedCashNative(value: BigDecimal, currency: String): String =
+    (if (value.signum() < 0) "-" else "+") + formatCashNative(value.abs(), currency)
 
 internal fun linkedIdsToRemove(data: PortfolioData, event: Event): Set<String> {
     val ids = mutableSetOf(event.id)

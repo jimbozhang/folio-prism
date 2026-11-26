@@ -349,12 +349,28 @@ class WebPortfolioApi(
                         color = data.settings.categories.firstOrNull { it.id == item.categoryId }?.color
                             ?: "#8A8A8A",
                         pnlCny = item.pnlCny.plainOrNull(),
+                        startValue = result.curve
+                            .firstOrNull { point -> point.categoryValues[item.categoryId] != null }
+                            ?.categoryValues
+                            ?.get(item.categoryId)
+                            ?.plainOrNull(),
+                        incomplete = item.incomplete,
+                    )
+                }
+                val instruments = result.instrumentPnl.map { item ->
+                    InstrumentPnlDto(
+                        categoryId = item.categoryId,
+                        name = item.name,
+                        code = item.code,
+                        pnlCny = item.pnlCny.plainOrNull(),
+                        startValue = item.startValue.plainOrNull(),
                         incomplete = item.incomplete,
                     )
                 }
                 val values = pnl.mapNotNull { it.pnlCny?.toBigDecimalOrNull() }
                 base.copy(
                     categoryPnl = pnl,
+                    instrumentPnl = instruments,
                     summary = ChartSummaryDto(
                         totalPnl = if (values.isEmpty()) null else values.fold(BigDecimal.ZERO, BigDecimal::add).plain(),
                     ),

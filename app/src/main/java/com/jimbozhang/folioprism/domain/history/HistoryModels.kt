@@ -72,11 +72,30 @@ data class CategoryPnl(
     val incomplete: Boolean,
 )
 
+/**
+ * P&L of a single instrument over the range, used to drill into a category's
+ * P&L. [pnlCny] = end value − start value − instrument flows − embedded
+ * transfer losses attributed to the instrument, so the P&Ls of a category's
+ * instruments sum to the category P&L (except for cross-category expenses,
+ * which keep the category-level attribution convention).
+ */
+data class InstrumentPnl(
+    val categoryId: String,
+    val instrumentId: String,
+    val name: String,
+    val code: String,
+    val startValue: BigDecimal?,
+    val pnlCny: BigDecimal?,
+    val incomplete: Boolean,
+)
+
 data class HistoryResult(
     val from: LocalDate,
     val to: LocalDate,
     val curve: List<DailyPortfolioValue>,
     val categoryPnl: List<CategoryPnl>,
+    /** Per-instrument P&L for the range, grouped by [InstrumentPnl.categoryId]. */
+    val instrumentPnl: List<InstrumentPnl> = emptyList(),
     val logs: List<String>,
     /** Days with non-market value changes, for the flow markers on the curve. */
     val dailyFlows: List<DailyFlow> = emptyList(),

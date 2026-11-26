@@ -44,8 +44,9 @@ fun HoldingRow(
     } else {
         null
     }
+    val isCash = instrument.kind == InstrumentKind.CASH
     val nativeValue = when {
-        instrument.kind == InstrumentKind.CASH -> quantity
+        isCash -> quantity
         price != null -> {
             val raw = quantity.multiply(price)
             // A CNY-denominated market value is a CNY amount: round to the fen.
@@ -55,6 +56,8 @@ fun HoldingRow(
     }
     val valueText = if (nativeValue == null) {
         "--"
+    } else if (isCash) {
+        formatCashNative(nativeValue, instrument.currency)
     } else {
         formatNative(nativeValue, instrument.currency)
     }
@@ -73,7 +76,9 @@ fun HoldingRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "$institutionName · ${formatQuantity(quantity)} ${instrument.unit}" +
+                text = "$institutionName · " +
+                    (if (isCash) formatCashNumber(quantity) else formatQuantity(quantity)) +
+                    " ${instrument.unit}" +
                     (price?.let { " × " + formatNative(it, instrument.currency) } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

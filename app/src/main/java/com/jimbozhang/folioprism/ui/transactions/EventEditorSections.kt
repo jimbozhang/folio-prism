@@ -62,6 +62,9 @@ import com.jimbozhang.folioprism.ui.components.InlineTextField
 import com.jimbozhang.folioprism.ui.components.PositionValue
 import com.jimbozhang.folioprism.ui.components.ToggleRow
 import com.jimbozhang.folioprism.ui.components.formatCny
+import com.jimbozhang.folioprism.ui.components.formatCashCny
+import com.jimbozhang.folioprism.ui.components.formatCashNative
+import com.jimbozhang.folioprism.ui.components.formatCashNumber
 import com.jimbozhang.folioprism.ui.components.formatNative
 import com.jimbozhang.folioprism.ui.components.formatQuantity
 import com.jimbozhang.folioprism.ui.theme.FolioBlue
@@ -197,7 +200,11 @@ internal fun TransferSection(
         value = form.fromQuantity,
         onValueChange = { form.fromQuantity = it },
         secondary = if (fromInstrument != null && fromValue != null) {
-            formatNative(fromValue, fromInstrument.currency)
+            if (fromInstrument.kind == InstrumentKind.CASH) {
+                formatCashNative(fromValue, fromInstrument.currency)
+            } else {
+                formatNative(fromValue, fromInstrument.currency)
+            }
         } else {
             null
         },
@@ -240,7 +247,11 @@ internal fun TransferSection(
         value = form.toQuantity,
         onValueChange = { form.toQuantity = it },
         secondary = if (toInstrument != null && toValue != null) {
-            formatNative(toValue, toInstrument.currency)
+            if (toInstrument.kind == InstrumentKind.CASH) {
+                formatCashNative(toValue, toInstrument.currency)
+            } else {
+                formatNative(toValue, toInstrument.currency)
+            }
         } else {
             null
         },
@@ -259,8 +270,13 @@ internal fun TransferSection(
             },
             modifier = Modifier.padding(start = 8.dp),
         ) {
+            val suggestedText = if (toInstrument?.kind == InstrumentKind.CASH) {
+                formatCashNumber(suggestedIn.toQuantity)
+            } else {
+                formatQuantity(suggestedIn.toQuantity)
+            }
             Text(
-                text = "按目标占比：" + formatQuantity(suggestedIn.toQuantity) + " " +
+                text = "按目标占比：" + suggestedText + " " +
                     heroQuantityLabel(toInstrument) +
                     if (suggestedIn.cappedBySource) "（受转出上限）" else "",
                 style = MaterialTheme.typography.bodySmall,
@@ -276,8 +292,13 @@ internal fun TransferSection(
             },
             modifier = Modifier.padding(start = 8.dp),
         ) {
+            val suggestedText = if (toInstrument?.kind == InstrumentKind.CASH) {
+                formatCashNumber(suggestedTo)
+            } else {
+                formatQuantity(suggestedTo)
+            }
             Text(
-                text = "按价值换算：" + formatQuantity(suggestedTo) + " " +
+                text = "按价值换算：" + suggestedText + " " +
                     heroQuantityLabel(toInstrument),
                 style = MaterialTheme.typography.bodySmall,
                 color = FolioGold,
@@ -307,15 +328,19 @@ private fun HoldingHint(
     holding: BigDecimal,
     valueCny: BigDecimal?,
 ) {
-    val text = if (instrument.kind == InstrumentKind.CASH) {
-        "现金余额 " + formatNative(holding, instrument.currency)
+    val isCash = instrument.kind == InstrumentKind.CASH
+    val text = if (isCash) {
+        "现金余额 " + formatCashNative(holding, instrument.currency)
     } else {
         "当前持仓 " + formatQuantity(holding) + " " + instrument.unit
     }
     val showCny = valueCny != null &&
-        !(instrument.kind == InstrumentKind.CASH &&
-            instrument.currency.uppercase() in setOf("CNY", "CNH"))
-    val cnySuffix = if (showCny) " · 约 " + formatCny(valueCny) else ""
+        !(isCash && instrument.currency.uppercase() in setOf("CNY", "CNH"))
+    val cnySuffix = if (showCny) {
+        " · 约 " + if (isCash) formatCashCny(valueCny) else formatCny(valueCny)
+    } else {
+        ""
+    }
     Text(
         text = text + cnySuffix,
         style = MaterialTheme.typography.bodySmall,
@@ -387,7 +412,7 @@ private fun TransferSummary(
     val feeLoss = feeLossText.toBigDecimalOrNull() ?: embedded
     val cashFee = if (feeFromCash) feeLoss.subtract(embedded) else null
     val cashSuffix = if (cashFee != null) {
-        " · 现金账户扣 " + formatNative(cashFee, lossCurrency)
+        " · 现金账户扣 " + formatCashNative(cashFee, lossCurrency)
     } else {
         ""
     }
@@ -396,9 +421,19 @@ private fun TransferSummary(
     } else {
         null
     }
+    val fromValueText = if (fromInstrument.kind == InstrumentKind.CASH) {
+        formatCashNative(fromValue, fromInstrument.currency)
+    } else {
+        formatNative(fromValue, fromInstrument.currency)
+    }
+    val toValueText = if (toInstrument.kind == InstrumentKind.CASH) {
+        formatCashNative(toValue, toInstrument.currency)
+    } else {
+        formatNative(toValue, toInstrument.currency)
+    }
     Text(
-        text = "转出价值 " + formatNative(fromValue, fromInstrument.currency) +
-            " · 转入价值 " + formatNative(toValue, toInstrument.currency) +
+        text = "转出价值 " + fromValueText +
+            " · 转入价值 " + toValueText +
             " · 手续费/损耗 " + formatNative(feeLoss, lossCurrency) + cashSuffix +
             (ratio?.let { " · 损耗占比 " + it.toPlainString() + "%" } ?: ""),
         style = MaterialTheme.typography.bodySmall,

@@ -4,6 +4,7 @@ import com.jimbozhang.folioprism.domain.history.CategoryPnl
 import com.jimbozhang.folioprism.domain.history.DailyFlow
 import com.jimbozhang.folioprism.domain.history.DailyPortfolioValue
 import com.jimbozhang.folioprism.domain.history.HistoryResult
+import com.jimbozhang.folioprism.domain.history.InstrumentPnl
 import com.jimbozhang.folioprism.domain.history.PriceCacheData
 import com.jimbozhang.folioprism.domain.model.AdjustmentEvent
 import com.jimbozhang.folioprism.domain.model.CategoryIds
@@ -62,13 +63,20 @@ object HistoryCalculator {
             EventReplay.applyEvent(positions, sortedEvents[eventIndex])
             eventIndex++
         }
-        val curve = days.map { day ->
+        // Position snapshots at the range edges, used for the per-instrument
+        // P&L drill-down. Captured after the events of that day are applied,
+        // matching the first/last curve point used for category P&L.
+        var startPositions: Map<PositionKey, BigDecimal>? = null
+        var endPositions: Map<PositionKey, BigDecimal>? = null
+        val curve = days.mapIndexed { index, day ->
             while (eventIndex < sortedEvents.size &&
                 !sortedEvents[eventIndex].localDate().isAfter(day)
             ) {
                 EventReplay.applyEvent(positions, sortedEvents[eventIndex])
                 eventIndex++
             }
+            if (index == 0) startPositions = positions.toMap()
+            if (index == days.lastIndex) endPositions = positions.toMap()
             dailyValue(data, provider, day, positions)
         }
         if (provider.usedInterpolation) {
@@ -80,6 +88,11 @@ object HistoryCalculator {
         val flows = mutableMapOf<String, BigDecimal>()
         val losses = mutableMapOf<String, BigDecimal>()
         val attribution = mutableMapOf<String, BigDecimal>()
+        // Instrument-level mirrors of [flows] and [losses]; they cover
+        // same-category movement as well, so each category's instruments sum
+        // to the category P&L.
+        val instFlows = mutableMapOf<String, BigDecimal>()
+        val instLosses = mutableMapOf<String, BigDecimal>()
         // Old data records transfer fees/losses as linked expenses. Do not
         // count the embedded value difference twice when those exist.
         val linkedFeeTransfers = data.events
@@ -130,13 +143,16 @@ object HistoryCalculator {
                     val fromCategory = fromInstrument?.categoryId
                     val toCategory = toInstrument?.categoryId
                     if (fromValueCny != null && toValueCny != null &&
-                        fromCategory != null && toCategory != null &&
-                        fromCategory != toCategory
+                        fromCategory != null && toCategory != null
                     ) {
-                        add(flows, fromCategory, fromValueCny.negate())
-                        add(flows, toCategory, toValueCny)
-                        addDaily(dailyInternal, date, fromCategory, fromValueCny.negate())
-                        addDaily(dailyInternal, date, toCategory, toValueCny)
+                        add(instFlows, event.from.instrumentId, fromValueCny.negate())
+                        add(instFlows, event.to.instrumentId, toValueCny)
+                        if (fromCategory != toCategory) {
+                            add(flows, fromCategory, fromValueCny.negate())
+                            add(flows, toCategory, toValueCny)
+                            addDaily(dailyInternal, date, fromCategory, fromValueCny.negate())
+                            addDaily(dailyInternal, date, toCategory, toValueCny)
+                        }
                     }
                     // The embedded fee/loss is stored in its native currency.
                     // An extra fee paid from a separate cash account is already
@@ -146,15 +162,32 @@ object HistoryCalculator {
                     if (embeddedLoss != null && event.id !in linkedFeeTransfers &&
                         embeddedLoss.signum() != 0
                     ) {
-                        add(
-                            losses,
+                        val lossCat =
                             transferLossCategory(
                                 data,
                                 event.from.instrumentId,
                                 event.to.instrumentId,
-                            ),
-                            embeddedLoss,
-                        )
+                            )
+                        // The loss is only a value change inside one category
+                        // for same-category transfers, where the position drop
+                        // already reflects it; counting it in [losses] there
+                        // would double-count it. Cross-category transfers move
+                        // value across the category border, so the loss must be
+                        // subtracted from the destination category.
+                        if (fromCategory != null && toCategory != null &&
+                            fromCategory != toCategory
+                        ) {
+                            add(losses, lossCat, embeddedLoss)
+                        }
+                        // Attribute the loss to one instrument, mirroring
+                        // [transferLossCategory].
+                        when {
+                            lossCat == toCategory ->
+                                add(instLosses, event.to.instrumentId, embeddedLoss)
+                            lossCat == fromCategory ->
+                                add(instLosses, event.from.instrumentId, embeddedLoss)
+                            else -> add(instLosses, event.to.instrumentId, embeddedLoss)
+                        }
                     }
                 }
 
@@ -165,13 +198,29 @@ object HistoryCalculator {
                         data.instrument(event.destination.instrumentId)?.categoryId
                     val amountCny = fx(event.currency, provider)
                         ?.let { event.amount.multiply(it).toCnyAmount() }
-                    if (amountCny != null && sourceCategory != null &&
-                        destinationCategory != null && sourceCategory != destinationCategory
-                    ) {
-                        add(flows, sourceCategory, amountCny.negate())
-                        add(flows, destinationCategory, amountCny)
-                        addDaily(dailyInternal, date, sourceCategory, amountCny.negate())
-                        addDaily(dailyInternal, date, destinationCategory, amountCny)
+                    if (amountCny != null) {
+                        val source = event.source
+                        source?.let {
+                            add(instFlows, it.instrumentId, amountCny.negate())
+                        }
+                        // With a source the amount moves between instruments,
+                        // so it is a flow for the destination. Without a
+                        // source (e.g. interest) the destination position
+                        // grows and the amount is a P&L gain for that
+                        // instrument, so no flow is recorded — mirroring the
+                        // category level, which only records cross-category
+                        // flows and lets source-less income land in P&L.
+                        if (source != null) {
+                            add(instFlows, event.destination.instrumentId, amountCny)
+                        }
+                        if (sourceCategory != null &&
+                            destinationCategory != null && sourceCategory != destinationCategory
+                        ) {
+                            add(flows, sourceCategory, amountCny.negate())
+                            add(flows, destinationCategory, amountCny)
+                            addDaily(dailyInternal, date, sourceCategory, amountCny.negate())
+                            addDaily(dailyInternal, date, destinationCategory, amountCny)
+                        }
                     }
                 }
 
@@ -185,6 +234,7 @@ object HistoryCalculator {
                         } else {
                             amountCny.negate()
                         }
+                        add(instFlows, event.position.instrumentId, signed)
                         add(flows, category, signed)
                         addDaily(dailyExternal, date, category, signed)
                     }
@@ -199,6 +249,12 @@ object HistoryCalculator {
                     if (event.position == null) {
                         add(losses, event.categoryId, amountCny)
                     } else {
+                        // No instrument-level entry: a position's expense is
+                        // already reflected in that position's value change.
+                        // Cross-category attribution below keeps the
+                        // category-level convention, so instruments of a
+                        // category with a cross-category expense paid do not
+                        // exactly sum to the category P&L.
                         val cashCategory =
                             data.instrument(event.position.instrumentId)?.categoryId
                         if (cashCategory != null && cashCategory != event.categoryId) {
@@ -222,6 +278,7 @@ object HistoryCalculator {
                         else -> null
                     }
                     if (category != null && value != null) {
+                        add(instFlows, event.position.instrumentId, value)
                         add(flows, category, value)
                         addDaily(dailyExternal, date, category, value)
                     }
@@ -248,6 +305,7 @@ object HistoryCalculator {
                         }
                         if (native != null) {
                             val value = native.multiply(rate).toCnyAmount()
+                            add(instFlows, event.position.instrumentId, value)
                             add(flows, category, value)
                             addDaily(dailyExternal, date, category, value)
                         }
@@ -280,6 +338,48 @@ object HistoryCalculator {
                 )
             }
 
+        // Per-instrument P&L: value at the range edges (each summed across
+        // institutions) minus the instrument-level flows and losses, so the
+        // instruments of a category sum to the category P&L.
+        val candidateInstruments = linkedSetOf<String>()
+        startPositions?.keys?.forEach { candidateInstruments += it.instrumentId }
+        endPositions?.keys?.forEach { candidateInstruments += it.instrumentId }
+        candidateInstruments += instFlows.keys
+        candidateInstruments += instLosses.keys
+        val instrumentPnl = candidateInstruments.mapNotNull { instrumentId ->
+            val startValue = startPositions?.let {
+                instrumentValue(data, provider, from, it, instrumentId)
+            }
+            val endValue = endPositions?.let {
+                instrumentValue(data, provider, to, it, instrumentId)
+            }
+            val pnlCny = if (startValue != null && endValue != null) {
+                endValue
+                    .subtract(startValue)
+                    .subtract(instFlows[instrumentId] ?: BigDecimal.ZERO)
+                    .subtract(instLosses[instrumentId] ?: BigDecimal.ZERO)
+            } else {
+                null
+            }
+            val instrument = data.instrument(instrumentId)
+            val heldAtEdge = (startValue == null || startValue.signum() != 0) ||
+                (endValue == null || endValue.signum() != 0)
+            val hadPnl = pnlCny != null && pnlCny.signum() != 0
+            if (!heldAtEdge && !hadPnl) {
+                null
+            } else {
+                InstrumentPnl(
+                    categoryId = instrument?.categoryId ?: CategoryIds.CASH,
+                    instrumentId = instrumentId,
+                    name = instrument?.name ?: instrumentId,
+                    code = instrument?.code.orEmpty(),
+                    startValue = startValue,
+                    pnlCny = pnlCny,
+                    incomplete = startValue == null || endValue == null,
+                )
+            }
+        }
+
         val dailyFlows = days.mapNotNull { day ->
             val external = dailyExternal[day]
             val internal = dailyInternal[day]
@@ -307,6 +407,7 @@ object HistoryCalculator {
             to = to,
             curve = curve,
             categoryPnl = categoryPnl,
+            instrumentPnl = instrumentPnl,
             logs = logs,
             dailyFlows = dailyFlows,
             adjustedCurve = adjustedCurve,
@@ -375,6 +476,34 @@ object HistoryCalculator {
             previous = value
             index?.setScale(2, RoundingMode.HALF_UP)
         }
+    }
+
+    /**
+     * Value of one instrument on [date], summed across all institutions.
+     * Null when a nonzero position of the instrument could not be priced;
+     * zero when it is not held.
+     */
+    private fun instrumentValue(
+        data: PortfolioData,
+        provider: PriceProvider,
+        date: LocalDate,
+        positions: Map<PositionKey, BigDecimal>,
+        instrumentId: String,
+    ): BigDecimal? {
+        var total = BigDecimal.ZERO
+        var unpriceable = false
+        positions.forEach { (key, quantity) ->
+            if (key.instrumentId != instrumentId || quantity.signum() == 0) {
+                return@forEach
+            }
+            val value = Valuation.valuePosition(data, key, quantity, provider, date)
+            if (value == null) {
+                unpriceable = true
+            } else {
+                total = total.add(value)
+            }
+        }
+        return if (unpriceable) null else total
     }
 
     /**

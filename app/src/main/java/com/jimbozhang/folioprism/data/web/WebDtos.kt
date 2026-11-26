@@ -168,6 +168,18 @@ data class CategoryPnlDto(
     val name: String,
     val color: String,
     val pnlCny: String? = null,
+    /** First non-null category value in the range; denominator of the range return. */
+    val startValue: String? = null,
+    val incomplete: Boolean,
+)
+
+@Serializable
+data class InstrumentPnlDto(
+    val categoryId: String,
+    val name: String,
+    val code: String,
+    val pnlCny: String? = null,
+    val startValue: String? = null,
     val incomplete: Boolean,
 )
 
@@ -180,6 +192,8 @@ data class ChartDto(
     val summary: ChartSummaryDto? = null,
     val category: CategoryRefDto? = null,
     val categoryPnl: List<CategoryPnlDto> = emptyList(),
+    /** Per-instrument P&L for the range, grouped by categoryId. */
+    val instrumentPnl: List<InstrumentPnlDto> = emptyList(),
     val logs: List<String> = emptyList(),
     /** Days with non-market changes, for the flow markers. */
     val flows: List<ChartFlowDto> = emptyList(),

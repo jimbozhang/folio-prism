@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import com.jimbozhang.folioprism.domain.calc.PositionKey
 import com.jimbozhang.folioprism.domain.model.Institution
 import com.jimbozhang.folioprism.domain.model.Instrument
+import com.jimbozhang.folioprism.domain.model.InstrumentKind
 import com.jimbozhang.folioprism.ui.theme.FolioDivider
 import com.jimbozhang.folioprism.ui.theme.FolioGold
 import com.jimbozhang.folioprism.ui.theme.FolioGoldSoft
@@ -320,10 +321,15 @@ fun PositionPickerPanel(
                                             val quantity = quantities[key]
                                             if (quantity != null && quantity.signum() != 0) {
                                                 Spacer(modifier = Modifier.height(2.dp))
+                                                val isCash = instrument.kind == InstrumentKind.CASH
+                                                val quantityText = if (isCash) formatCashNumber(quantity)
+                                                else formatQuantity(quantity)
+                                                val valuePart = values[key]?.let { value ->
+                                                    " · 约 " + (if (isCash) formatCashCny(value) else formatCny(value))
+                                                } ?: ""
                                                 Text(
-                                                    text = "持有 " + formatQuantity(quantity) + " " +
-                                                        instrument.unit +
-                                                        (values[key]?.let { " · 约 " + formatCny(it) } ?: ""),
+                                                    text = "持有 " + quantityText + " " +
+                                                        instrument.unit + valuePart,
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = FolioMuted,
                                                 )
