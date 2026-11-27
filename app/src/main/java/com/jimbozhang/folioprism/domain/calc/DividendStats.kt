@@ -18,6 +18,8 @@ data class DividendRecord(
     val sourceCategoryName: String,
     val sourceInstrumentId: String?,
     val sourceInstrumentName: String,
+    /** Code of the paying instrument; null when the dividend has no source. */
+    val sourceInstrumentCode: String?,
     val destinationInstitutionId: String,
     val destinationInstitutionName: String,
     val destinationInstrumentName: String,
@@ -30,6 +32,8 @@ data class DividendGroup(
     val name: String,
     val amountCny: BigDecimal,
     val count: Int,
+    /** The dividend events that make up this slice. */
+    val records: List<DividendRecord>,
 )
 
 data class DividendMonth(
@@ -59,6 +63,8 @@ data class DividendStats(
     val retainedCount: Int,
     val largest: DividendRecord?,
     val latest: DividendRecord?,
+    /** Every dividend inside the range, for the drill-down flow listings. */
+    val records: List<DividendRecord>,
 ) {
     val averagePerMonthCny: BigDecimal?
         get() = if (monthly.isEmpty()) {
@@ -104,6 +110,7 @@ object DividendStatsCalculator {
                     sourceCategoryName = sourceCategory?.name ?: NO_SOURCE,
                     sourceInstrumentId = sourceInstrument?.id,
                     sourceInstrumentName = sourceInstrument?.name ?: NO_SOURCE,
+                    sourceInstrumentCode = sourceInstrument?.code,
                     destinationInstitutionId = event.destination.institutionId,
                     destinationInstitutionName =
                         destinationInstitution?.name ?: event.destination.institutionId,
@@ -157,6 +164,7 @@ object DividendStatsCalculator {
             retainedCount = retained.size,
             largest = records.maxByOrNull { it.amountCny },
             latest = records.maxByOrNull { it.date },
+            records = records,
         )
     }
 
@@ -172,6 +180,7 @@ object DividendStatsCalculator {
                 name = name(list.first()),
                 amountCny = sum(list),
                 count = list.size,
+                records = list,
             )
         }
         .sortedByDescending { it.amountCny }

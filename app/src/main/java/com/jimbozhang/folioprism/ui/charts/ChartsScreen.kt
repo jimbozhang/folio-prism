@@ -72,6 +72,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jimbozhang.folioprism.data.price.LivePriceProvider
+import com.jimbozhang.folioprism.domain.calc.DividendRecord
 import com.jimbozhang.folioprism.domain.calc.DividendStats
 import com.jimbozhang.folioprism.domain.calc.DividendStatsCalculator
 import com.jimbozhang.folioprism.domain.calc.EventReplay
@@ -79,6 +80,7 @@ import com.jimbozhang.folioprism.domain.calc.PortfolioSnapshot
 import com.jimbozhang.folioprism.domain.calc.PositionKey
 import com.jimbozhang.folioprism.domain.calc.RebalanceCategoryFlow
 import com.jimbozhang.folioprism.domain.calc.RebalanceMonth
+import com.jimbozhang.folioprism.domain.calc.RebalanceRecord
 import com.jimbozhang.folioprism.domain.calc.RebalancePair
 import com.jimbozhang.folioprism.domain.calc.RebalanceStats
 import com.jimbozhang.folioprism.domain.calc.RebalanceStatsCalculator
@@ -331,10 +333,14 @@ fun ChartsScreen(
 
                 ChartType.FLOWS -> flowsContent(monthlyFlows)
 
-                ChartType.REBALANCE -> rebalanceContent(rebalanceStats)
+                ChartType.REBALANCE -> rebalanceContent(
+                    stats = rebalanceStats,
+                    range = range,
+                )
 
                 ChartType.DIVIDENDS -> dividendsContent(
                     stats = dividendStats,
+                    range = range,
                     categoryColors = dividendCategoryColors,
                     instrumentColors = dividendInstrumentColors,
                 )
@@ -830,14 +836,18 @@ private fun LazyListScope.flowsContent(monthly: List<MonthFlow>) {
 }
 
 private data class DividendBarRow(
+    val id: String,
     val name: String,
     val amountCny: BigDecimal,
     val count: Int,
     val color: Color,
+    /** The dividend flows that make up this row. */
+    val flows: List<DividendRecord>,
 )
 
 private fun LazyListScope.dividendsContent(
     stats: DividendStats,
+    range: DateRange,
     categoryColors: Map<String, Color>,
     instrumentColors: Map<String, Color>,
 ) {
@@ -881,9 +891,24 @@ private fun LazyListScope.dividendsContent(
     item {
         DividendBarsBlock(
             title = "去向分布",
+            range = range,
             rows = listOf(
-                DividendBarRow("立即转出", stats.withdrawnCny, stats.withdrawnCount, FolioBlue),
-                DividendBarRow("留存现金", stats.retainedCny, stats.retainedCount, FolioGreen),
+                DividendBarRow(
+                    id = "withdrawn",
+                    name = "立即转出",
+                    amountCny = stats.withdrawnCny,
+                    count = stats.withdrawnCount,
+                    color = FolioBlue,
+                    flows = stats.records.filter { it.withdrawn },
+                ),
+                DividendBarRow(
+                    id = "retained",
+                    name = "留存现金",
+                    amountCny = stats.retainedCny,
+                    count = stats.retainedCount,
+                    color = FolioGreen,
+                    flows = stats.records.filter { !it.withdrawn },
+                ),
             ).filter { it.count > 0 },
             total = stats.totalCny,
         )
@@ -891,12 +916,15 @@ private fun LazyListScope.dividendsContent(
     item {
         DividendBarsBlock(
             title = "来源类别",
-            rows = stats.bySourceCategory.map {
+            range = range,
+            rows = stats.bySourceCategory.map { group ->
                 DividendBarRow(
-                    name = it.name,
-                    amountCny = it.amountCny,
-                    count = it.count,
-                    color = categoryColors[it.id] ?: FolioMuted,
+                    id = group.id,
+                    name = group.name,
+                    amountCny = group.amountCny,
+                    count = group.count,
+                    color = categoryColors[group.id] ?: FolioMuted,
+                    flows = group.records,
                 )
             },
             total = stats.totalCny,
@@ -905,12 +933,15 @@ private fun LazyListScope.dividendsContent(
     item {
         DividendBarsBlock(
             title = "来源标的",
-            rows = stats.bySourceInstrument.map {
+            range = range,
+            rows = stats.bySourceInstrument.map { group ->
                 DividendBarRow(
-                    name = it.name,
-                    amountCny = it.amountCny,
-                    count = it.count,
-                    color = instrumentColors[it.id] ?: FolioMuted,
+                    id = group.id,
+                    name = group.name,
+                    amountCny = group.amountCny,
+                    count = group.count,
+                    color = instrumentColors[group.id] ?: FolioMuted,
+                    flows = group.records,
                 )
             },
             total = stats.totalCny,
@@ -919,8 +950,9 @@ private fun LazyListScope.dividendsContent(
     item {
         DividendBarsBlock(
             title = "入账账户",
-            rows = stats.byDestinationAccount.map {
-                DividendBarRow(it.name, it.amountCny, it.count, FolioPurple)
+            range = range,
+            rows = stats.byDestinationAccount.map { group ->
+                DividendBarRow(group.id, group.name, group.amountCny, group.count, FolioPurple, group.records)
             },
             total = stats.totalCny,
         )
@@ -928,12 +960,17 @@ private fun LazyListScope.dividendsContent(
     item {
         DividendBarsBlock(
             title = "月度分红",
-            rows = stats.monthly.map {
+            range = range,
+            rows = stats.monthly.map { month ->
                 DividendBarRow(
-                    name = "${it.month.year} 年 ${it.month.monthValue} 月",
-                    amountCny = it.amountCny,
-                    count = it.count,
+                    id = month.month.toString(),
+                    name = "${month.month.year} 年 ${month.month.monthValue} 月",
+                    amountCny = month.amountCny,
+                    count = month.count,
                     color = FolioGold,
+                    flows = stats.records.filter { record ->
+                        YearMonth.from(record.date) == month.month
+                    },
                 )
             },
             total = stats.totalCny,
@@ -944,9 +981,12 @@ private fun LazyListScope.dividendsContent(
 @Composable
 private fun DividendBarsBlock(
     title: String,
+    range: DateRange,
     rows: List<DividendBarRow>,
     total: BigDecimal,
 ) {
+    // Which row is expanded; reset whenever the range changes.
+    var expandedId by remember(range) { mutableStateOf<String?>(null) }
     WhiteBlock {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             SectionTitle(title)
@@ -954,20 +994,38 @@ private fun DividendBarsBlock(
                 if (index > 0) {
                     HorizontalDivider(color = FolioDivider)
                 }
-                DividendBarRowItem(row, total)
+                val expanded = expandedId == row.id
+                DividendBarRowItem(
+                    row = row,
+                    total = total,
+                    expanded = expanded,
+                    onToggle = { expandedId = if (expanded) null else row.id },
+                )
+                if (expanded && row.flows.isNotEmpty()) {
+                    DividendFlowsCard(row.flows)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DividendBarRowItem(row: DividendBarRow, total: BigDecimal) {
+private fun DividendBarRowItem(
+    row: DividendBarRow,
+    total: BigDecimal,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
     val share = if (total.signum() > 0) {
         row.amountCny.divide(total, 6, java.math.RoundingMode.HALF_UP)
     } else {
         BigDecimal.ZERO
     }
-    Column(modifier = Modifier.padding(vertical = 10.dp)) {
+    Column(
+        modifier = Modifier
+            .padding(vertical = 10.dp)
+            .clickable(onClick = onToggle),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -998,6 +1056,13 @@ private fun DividendBarRowItem(row: DividendBarRow, total: BigDecimal) {
                 style = MaterialTheme.typography.bodySmall,
                 color = FolioMuted,
             )
+            Spacer(modifier = Modifier.width(6.dp))
+            Icon(
+                imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                contentDescription = if (expanded) "收起流水" else "展开流水",
+                tint = FolioMuted,
+                modifier = Modifier.size(18.dp),
+            )
         }
         Spacer(modifier = Modifier.height(3.dp))
         Text(
@@ -1024,9 +1089,79 @@ private fun DividendBarRowItem(row: DividendBarRow, total: BigDecimal) {
     }
 }
 
+/**
+ * Drill-down card below an expanded dividend row: every dividend in that
+ * slice, newest first, with its paying instrument, destination account and
+ * CNY amount; immediately withdrawn ones are tagged.
+ */
+@Composable
+private fun DividendFlowsCard(flows: List<DividendRecord>) {
+    val sorted = flows.sortedByDescending { it.date }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 2.dp, bottom = 14.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFFF5F5F5)),
+    ) {
+        sorted.forEachIndexed { index, record ->
+            if (index > 0) {
+                HorizontalDivider(color = FolioDivider)
+            }
+            DividendFlowRowItem(record)
+        }
+    }
+}
+
+@Composable
+private fun DividendFlowRowItem(record: DividendRecord) {
+    val source = record.sourceInstrumentCode?.let { code -> "$code ${record.sourceInstrumentName}" }
+        ?: record.sourceInstrumentName
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        // Three lines so long instrument names get the full width: the paying
+        // instrument, the destination account, then date and CNY amount.
+        Text(
+            text = source,
+            style = MaterialTheme.typography.bodyMedium,
+            color = FolioInk,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = "入账 ${record.destinationInstitutionName} · ${record.destinationInstrumentName}",
+            style = MaterialTheme.typography.bodySmall,
+            color = FolioMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = record.date.toString() +
+                    (if (record.withdrawn) " · 立即转出" else ""),
+                style = MaterialTheme.typography.labelSmall,
+                color = FolioMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = formatCashCny(record.amountCny),
+                style = MaterialTheme.typography.labelLarge,
+                color = FolioInk,
+            )
+        }
+    }
+}
+
 private fun shortDate(date: LocalDate): String = "${date.monthValue}月${date.dayOfMonth}日"
 
-private fun LazyListScope.rebalanceContent(stats: RebalanceStats) {
+private fun LazyListScope.rebalanceContent(stats: RebalanceStats, range: DateRange) {
     if (stats.count == 0) {
         item { EmptyBlock("所选区间内没有调仓（不同标的之间的转账）。") }
         item { RebalanceFootnote(stats) }
@@ -1060,10 +1195,22 @@ private fun LazyListScope.rebalanceContent(stats: RebalanceStats) {
     }
     item { RebalanceMonthlyChart(stats.months) }
     if (stats.categoryFlows.isNotEmpty()) {
-        item { RebalanceFlowBlock(stats.categoryFlows) }
+        item {
+            RebalanceFlowBlock(
+                flows = stats.categoryFlows,
+                range = range,
+                records = stats.records,
+            )
+        }
     }
     if (stats.topPairs.isNotEmpty()) {
-        item { RebalancePairsBlock(stats.topPairs) }
+        item {
+            RebalancePairsBlock(
+                pairs = stats.topPairs,
+                range = range,
+                records = stats.records,
+            )
+        }
     }
     item { RebalanceFootnote(stats) }
 }
@@ -1198,7 +1345,11 @@ private fun RebalanceMonthlyChart(months: List<RebalanceMonth>) {
 }
 
 @Composable
-private fun RebalanceFlowBlock(flows: List<RebalanceCategoryFlow>) {
+private fun RebalanceFlowBlock(
+    flows: List<RebalanceCategoryFlow>,
+    range: DateRange,
+    records: List<RebalanceRecord>,
+) {
     // Net flow per category: positive = net bought into the category,
     // negative = net sold out of it.
     val nets = flows
@@ -1213,6 +1364,8 @@ private fun RebalanceFlowBlock(flows: List<RebalanceCategoryFlow>) {
     } else {
         0.5f
     }
+    // Which category row is expanded; reset whenever the range changes.
+    var expandedId by remember(range) { mutableStateOf<String?>(null) }
     WhiteBlock {
         Column(modifier = Modifier.padding(top = 14.dp)) {
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -1225,7 +1378,25 @@ private fun RebalanceFlowBlock(flows: List<RebalanceCategoryFlow>) {
                         color = FolioDivider,
                     )
                 }
-                RebalanceFlowRow(flow, net, maxGain, maxLoss, zeroFraction)
+                val expanded = expandedId == flow.categoryId
+                RebalanceFlowRow(
+                    flow = flow,
+                    net = net,
+                    maxGain = maxGain,
+                    maxLoss = maxLoss,
+                    zeroFraction = zeroFraction,
+                    expanded = expanded,
+                    onToggle = { expandedId = if (expanded) null else flow.categoryId },
+                )
+                if (expanded) {
+                    RebalanceFlowsCard(
+                        flows = records.filter {
+                            it.fromCategoryId == flow.categoryId ||
+                                it.toCategoryId == flow.categoryId
+                        },
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
             }
         }
     }
@@ -1238,12 +1409,15 @@ private fun RebalanceFlowRow(
     maxGain: BigDecimal,
     maxLoss: BigDecimal,
     zeroFraction: Float,
+    expanded: Boolean,
+    onToggle: () -> Unit,
 ) {
     val color = pnlColor(net)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 13.dp),
+            .padding(horizontal = 16.dp, vertical = 13.dp)
+            .clickable(onClick = onToggle),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -1327,6 +1501,13 @@ private fun RebalanceFlowRow(
             style = MaterialTheme.typography.titleSmall,
             color = color,
         )
+        Spacer(modifier = Modifier.width(6.dp))
+        Icon(
+            imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+            contentDescription = if (expanded) "收起流水" else "展开流水",
+            tint = FolioMuted,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
@@ -1337,7 +1518,13 @@ private fun signedCny(value: BigDecimal): String = when {
 }
 
 @Composable
-private fun RebalancePairsBlock(pairs: List<RebalancePair>) {
+private fun RebalancePairsBlock(
+    pairs: List<RebalancePair>,
+    range: DateRange,
+    records: List<RebalanceRecord>,
+) {
+    // Which pair row is expanded; reset whenever the range changes.
+    var expandedId by remember(range) { mutableStateOf<String?>(null) }
     WhiteBlock {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             SectionTitle("最频繁的调仓方向")
@@ -1345,10 +1532,15 @@ private fun RebalancePairsBlock(pairs: List<RebalancePair>) {
                 if (index > 0) {
                     HorizontalDivider(color = FolioDivider)
                 }
+                val id = "${pair.fromCategoryId}|${pair.toCategoryId}"
+                val expanded = expandedId == id
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 10.dp),
+                        .padding(vertical = 10.dp)
+                        .clickable(onClick = {
+                            expandedId = if (expanded) null else id
+                        }),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -1368,8 +1560,100 @@ private fun RebalancePairsBlock(pairs: List<RebalancePair>) {
                         style = MaterialTheme.typography.bodySmall,
                         color = FolioInk,
                     )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector =
+                            if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                        contentDescription = if (expanded) "收起流水" else "展开流水",
+                        tint = FolioMuted,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                if (expanded) {
+                    RebalanceFlowsCard(
+                        records.filter {
+                            it.fromCategoryId == pair.fromCategoryId &&
+                                it.toCategoryId == pair.toCategoryId
+                        },
+                    )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Drill-down card below an expanded 调仓流向 / 调仓方向 row: every
+ * rebalancing trade in that slice, newest first, with both instruments and
+ * the sold-leg CNY value.
+ */
+@Composable
+private fun RebalanceFlowsCard(
+    flows: List<RebalanceRecord>,
+    modifier: Modifier = Modifier,
+) {
+    val sorted = flows.sortedByDescending { it.date }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 2.dp, bottom = 14.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFFF5F5F5)),
+    ) {
+        sorted.forEachIndexed { index, record ->
+            if (index > 0) {
+                HorizontalDivider(color = FolioDivider)
+            }
+            RebalanceFlowRowItem(record)
+        }
+    }
+}
+
+@Composable
+private fun RebalanceFlowRowItem(record: RebalanceRecord) {
+    val amount = record.outCny ?: record.inCny
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        // Three lines so both instruments get the full width: the sold leg,
+        // the bought leg, then date and CNY amount.
+        Text(
+            text = "转出 ${record.fromInstrumentLabel}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = FolioInk,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = "转入 ${record.toInstrumentLabel}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = FolioInk,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = record.date.toString() +
+                    (if (record.feeLossCny.signum() != 0) {
+                        " · 损耗 " + formatCny(record.feeLossCny)
+                    } else {
+                        ""
+                    }),
+                style = MaterialTheme.typography.labelSmall,
+                color = FolioMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = formatCny(amount),
+                style = MaterialTheme.typography.labelLarge,
+                color = FolioInk,
+            )
         }
     }
 }

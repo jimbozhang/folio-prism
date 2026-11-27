@@ -33,8 +33,12 @@ data class RebalanceRecord(
     val direction: RebalanceDirection,
     val fromCategoryId: String,
     val fromCategoryName: String,
+    /** "Code name" label of the sold instrument, for the flow listing. */
+    val fromInstrumentLabel: String,
     val toCategoryId: String,
     val toCategoryName: String,
+    /** "Code name" label of the bought instrument, for the flow listing. */
+    val toInstrumentLabel: String,
     /** CNY value of the sold leg; null when that leg cannot be priced. */
     val outCny: BigDecimal?,
     /** CNY value of the bought leg; null when that leg cannot be priced. */
@@ -64,6 +68,8 @@ data class RebalanceCategoryFlow(
 
 /** How often money moved from one category to another. */
 data class RebalancePair(
+    val fromCategoryId: String,
+    val toCategoryId: String,
     val fromName: String,
     val toName: String,
     val count: Int,
@@ -91,6 +97,7 @@ data class RebalanceStats(
     val months: List<RebalanceMonth>,
     val categoryFlows: List<RebalanceCategoryFlow>,
     val topPairs: List<RebalancePair>,
+    val records: List<RebalanceRecord>,
     val accountMoveCount: Int,
     val fxSwapCount: Int,
     /** Transfers inside the cash category (cash to a money fund, ...). */
@@ -171,8 +178,10 @@ object RebalanceStatsCalculator {
                     direction = direction,
                     fromCategoryId = fromInstrument.categoryId,
                     fromCategoryName = categoryName(data, fromInstrument.categoryId),
+                    fromInstrumentLabel = instrumentLabel(fromInstrument),
                     toCategoryId = toInstrument.categoryId,
                     toCategoryName = categoryName(data, toInstrument.categoryId),
+                    toInstrumentLabel = instrumentLabel(toInstrument),
                     outCny = outNative?.let { outFrequency?.let { fx -> it.multiply(fx) } }
                         ?.toCnyAmount(),
                     inCny = inNative?.let { inFrequency?.let { fx -> it.multiply(fx) } }
@@ -198,6 +207,7 @@ object RebalanceStatsCalculator {
             months = months,
             categoryFlows = categoryFlows(data, records),
             topPairs = topPairs(records),
+            records = records,
             accountMoveCount = accountMoveCount,
             fxSwapCount = fxSwapCount,
             cashCategoryCount = cashCategoryCount,
@@ -267,6 +277,8 @@ object RebalanceStatsCalculator {
             .groupBy { it.fromCategoryId to it.toCategoryId }
             .map { (key, list) ->
                 RebalancePair(
+                    fromCategoryId = key.first,
+                    toCategoryId = key.second,
                     fromName = list.first().fromCategoryName,
                     toName = list.first().toCategoryName,
                     count = list.size,
@@ -314,6 +326,10 @@ object RebalanceStatsCalculator {
 
     private fun categoryName(data: PortfolioData, categoryId: String): String =
         data.settings.categories.firstOrNull { it.id == categoryId }?.name ?: categoryId
+
+    private fun instrumentLabel(instrument: Instrument): String =
+        if (instrument.code.isEmpty()) instrument.name
+        else "${instrument.code} ${instrument.name}"
 
     private fun fxRate(currency: String, fxRates: Map<String, BigDecimal>): BigDecimal? =
         when (currency.uppercase()) {
