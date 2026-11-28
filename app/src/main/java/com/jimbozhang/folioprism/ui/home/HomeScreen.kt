@@ -137,13 +137,22 @@ fun HomeScreen(
         item {
             PortfolioOverview(
                 categories = strategyCategories,
+                satelliteCategories = satelliteCategories,
                 onCategoryClick = { categoryId ->
                     expandedIds = expandedIds + categoryId
-                    val categoryIndex = strategyCategories
+                    val strategyIndex = strategyCategories
                         .indexOfFirst { it.category.id == categoryId }
-                    if (categoryIndex >= 0) {
+                    val satelliteIndex = satelliteCategories
+                        .indexOfFirst { it.category.id == categoryId }
+                    val itemIndex = when {
+                        strategyIndex >= 0 -> firstCategoryIndex + strategyIndex
+                        satelliteIndex >= 0 ->
+                            firstCategoryIndex + strategyCategories.size + satelliteIndex
+                        else -> -1
+                    }
+                    if (itemIndex >= 0) {
                         scope.launch {
-                            listState.animateScrollToItem(firstCategoryIndex + categoryIndex)
+                            listState.animateScrollToItem(itemIndex)
                         }
                     }
                 },
@@ -193,6 +202,7 @@ fun HomeScreen(
 @Composable
 private fun PortfolioOverview(
     categories: List<CategorySnapshot>,
+    satelliteCategories: List<CategorySnapshot>,
     onCategoryClick: (String) -> Unit,
 ) {
     Card(
@@ -218,6 +228,20 @@ private fun PortfolioOverview(
                     )
                 }
                 OverviewRow(
+                    category = category,
+                    scale = scale,
+                    onClick = { onCategoryClick(category.category.id) },
+                )
+            }
+            // Satellite rows follow the strategy rows: they count toward
+            // total assets but carry no target or range, so the bar shows
+            // only the fill and the percentage stays neutral.
+            satelliteCategories.forEach { category ->
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                    color = FolioDivider,
+                )
+                SatelliteOverviewRow(
                     category = category,
                     scale = scale,
                     onClick = { onCategoryClick(category.category.id) },
@@ -306,11 +330,86 @@ private fun OverviewRow(
     }
 }
 
+/**
+ * Quiet allocation row for satellite categories: amount and actual share of
+ * total assets only. No target line, no range band or min/max markers.
+ */
+@Composable
+private fun SatelliteOverviewRow(
+    category: CategorySnapshot,
+    scale: Float,
+    onClick: () -> Unit,
+) {
+    val color = remember(category.category.color) { parseCategoryColor(category.category) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier.width(58.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(color),
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = category.category.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = FolioInk,
+                maxLines = 1,
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        OverviewBar(
+            category = category,
+            color = color,
+            scale = scale,
+            showTargets = false,
+            modifier = Modifier
+                .weight(1f)
+                .height(14.dp),
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(
+            modifier = Modifier.width(96.dp),
+            horizontalAlignment = Alignment.End,
+        ) {
+            Text(
+                text = formatCny(category.valueCny),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = FolioInk,
+                maxLines = 1,
+            )
+            Text(
+                text = formatPercent(category.share),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        Icon(
+            imageVector = Icons.Outlined.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
+    }
+}
+
 @Composable
 private fun OverviewBar(
     category: CategorySnapshot,
     color: Color,
     scale: Float,
+    showTargets: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val share = category.visualShare.toFloat()
@@ -330,7 +429,7 @@ private fun OverviewBar(
         )
         val minX = (min / scale).coerceIn(0f, 1f) * size.width
         val maxX = (max / scale).coerceIn(0f, 1f) * size.width
-        if (maxX > minX) {
+        if (showTargets && maxX > minX) {
             drawRoundRect(
                 color = FolioGreen.copy(alpha = 0.14f),
                 topLeft = Offset(minX, top),
@@ -347,7 +446,7 @@ private fun OverviewBar(
                 cornerRadius = radius,
             )
         }
-        if (maxX > minX) {
+        if (showTargets && maxX > minX) {
             listOf(minX, maxX).forEach { x ->
                 drawLine(
                     color = Color(0xFF9AA3A6),
@@ -357,13 +456,15 @@ private fun OverviewBar(
                 )
             }
         }
-        val targetX = (target / scale).coerceIn(0f, 1f) * size.width
-        drawLine(
-            color = FolioInk.copy(alpha = 0.5f),
-            start = Offset(targetX, top - 2.dp.toPx()),
-            end = Offset(targetX, top + trackHeight + 2.dp.toPx()),
-            strokeWidth = 1.5.dp.toPx(),
-        )
+        if (showTargets) {
+            val targetX = (target / scale).coerceIn(0f, 1f) * size.width
+            drawLine(
+                color = FolioInk.copy(alpha = 0.5f),
+                start = Offset(targetX, top - 2.dp.toPx()),
+                end = Offset(targetX, top + trackHeight + 2.dp.toPx()),
+                strokeWidth = 1.5.dp.toPx(),
+            )
+        }
     }
 }
 
@@ -744,8 +845,12 @@ private data class ThresholdAnnotation(
      * null: neutral reference (target).
      */
     val goodWhenPositive: Boolean?,
-    /** Gold only: the base unit price at this threshold, in the active gold source's unit. */
-    val unitPriceLabel: String? = null,
+    /**
+     * Gold only: the base unit price at this threshold. One line for the
+     * domestic source (CNY per gram); two lines for the international
+     * source (USD per troy ounce, then the same price as CNY per gram).
+     */
+    val unitPriceLines: List<String> = emptyList(),
 )
 
 @Composable
@@ -767,20 +872,21 @@ private fun CategoryRangeBar(
     val markerPosition = window.position(category.share.toFloat())
     val statusColor = if (category.inRange) FolioGreen else FolioCoral
     // Threshold unit prices follow the configured gold source: AU9999 quotes
-    // CNY per gram, XAU quotes USD per troy ounce.
+    // CNY per gram, XAU quotes USD per troy ounce plus the CNY per gram
+    // equivalent.
     val goldInCnyPerGram = goldSource.equals("AU9999", ignoreCase = true) ||
         goldSource.equals("sge", ignoreCase = true)
-    val minPriceLabel = goldPriceLabel(
+    val minPriceLines = goldPriceLines(
         cnyPerGram = category.goldMinPriceCnyPerGram,
         inCnyPerGram = goldInCnyPerGram,
         usdCny = usdCny,
     )
-    val maxPriceLabel = goldPriceLabel(
+    val maxPriceLines = goldPriceLines(
         cnyPerGram = category.goldMaxPriceCnyPerGram,
         inCnyPerGram = goldInCnyPerGram,
         usdCny = usdCny,
     )
-    val thresholds = remember(category, window, minPriceLabel, maxPriceLabel) {
+    val thresholds = remember(category, window, minPriceLines, maxPriceLines) {
         listOf(
             ThresholdAnnotation(
                 name = "最低",
@@ -789,7 +895,7 @@ private fun CategoryRangeBar(
                 amount = category.minValueCny,
                 diff = category.gapToMinCny,
                 goodWhenPositive = true,
-                unitPriceLabel = minPriceLabel,
+                unitPriceLines = minPriceLines,
             ),
             ThresholdAnnotation(
                 name = "标准",
@@ -806,7 +912,7 @@ private fun CategoryRangeBar(
                 amount = category.maxValueCny,
                 diff = category.gapToMaxCny,
                 goodWhenPositive = false,
-                unitPriceLabel = maxPriceLabel,
+                unitPriceLines = maxPriceLines,
             ),
         )
     }
@@ -971,9 +1077,10 @@ private fun ThresholdAxis(
     val endStyle = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp)
     val leftEnd = "${(window.min * 100f).roundToInt()}%"
     val rightEnd = "${(window.max * 100f).roundToInt()}%"
-    // Gold adds a threshold unit-price line under the dynamic amount.
-    val hasUnitPrices = thresholds.any { it.unitPriceLabel != null }
-    val axisHeight = (if (expanded) 58.dp else 34.dp) + if (hasUnitPrices) 15.dp else 0.dp
+    // Gold shows threshold unit prices under the dynamic amount, but only
+    // when the card is expanded; the international source needs two lines.
+    val unitPriceLineCount = if (expanded) thresholds.maxOf { it.unitPriceLines.size } else 0
+    val axisHeight = (if (expanded) 58.dp else 34.dp) + 15.dp * unitPriceLineCount
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(axisHeight)) {
         val density = LocalDensity.current
@@ -986,7 +1093,9 @@ private fun ThresholdAxis(
                 if (expanded) add(threshold.name to nameStyle)
                 add(formatPercent(threshold.percent) to percentStyle)
                 add(formatCnyCompact(threshold.amount) to amountStyle)
-                threshold.unitPriceLabel?.let { add(it to unitPriceStyle) }
+                if (expanded) {
+                    threshold.unitPriceLines.forEach { add(it to unitPriceStyle) }
+                }
                 if (expanded) add(diffText(threshold.diff) to diffStyle)
             }
             texts.maxOf { (text, style) -> measurer.measure(text, style).size.width }.toFloat()
@@ -1047,12 +1156,14 @@ private fun ThresholdAxis(
                     style = amountStyle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                threshold.unitPriceLabel?.let { label ->
-                    Text(
-                        text = label,
-                        style = unitPriceStyle,
-                        color = FolioGold,
-                    )
+                if (expanded) {
+                    threshold.unitPriceLines.forEach { label ->
+                        Text(
+                            text = label,
+                            style = unitPriceStyle,
+                            color = FolioGold,
+                        )
+                    }
                 }
                 if (expanded) {
                     Text(
@@ -1091,23 +1202,26 @@ private fun diffText(diff: BigDecimal?): String = when {
 private val TROY_OUNCE_GRAMS = BigDecimal("31.1035")
 
 /**
- * Formats a gold threshold price in the active source's unit: CNY per gram
- * for AU9999, USD per troy ounce for XAU (base price, before premiums).
+ * Formats a gold threshold price (base price, before premiums) for the
+ * active source: one CNY-per-gram line for the domestic source; for the
+ * international source two lines, USD per troy ounce first and the same
+ * price in CNY per gram. The USD line is dropped when the USD/CNY rate is
+ * unavailable; the price itself missing yields no lines.
  */
-private fun goldPriceLabel(
+private fun goldPriceLines(
     cnyPerGram: BigDecimal?,
     inCnyPerGram: Boolean,
     usdCny: BigDecimal?,
-): String? {
-    if (cnyPerGram == null) return null
-    if (inCnyPerGram) return formatCny(cnyPerGram) + "/克"
-    val rate = usdCny ?: return null
-    if (rate.signum() <= 0) return null
+): List<String> {
+    if (cnyPerGram == null) return emptyList()
+    val cnyLabel = formatCny(cnyPerGram) + "/克"
+    val rate = usdCny
+    if (inCnyPerGram || rate == null || rate.signum() <= 0) return listOf(cnyLabel)
     val usdPerOunce = cnyPerGram
         .multiply(TROY_OUNCE_GRAMS)
         .divide(rate, 10, RoundingMode.HALF_UP)
         .setScale(2, RoundingMode.HALF_UP)
-    return formatNative(usdPerOunce, "USD") + "/盎司"
+    return listOf(formatNative(usdPerOunce, "USD") + "/盎司", cnyLabel)
 }
 
 /** Keeps a label centred on [center] but fully inside the bar. */

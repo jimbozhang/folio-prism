@@ -83,6 +83,19 @@ class SatelliteSnapshotTest {
     }
 
     @Test
+    fun summarySharesDivideTotalAssetsIncludingSatellite() {
+        val snapshot = SnapshotCalculator.build(data(), positions, provider(), date)
+
+        // The summary card shares use total assets (1000 CNY) as the
+        // denominator, so dividend + portfolio + satellite = 100%:
+        // portfolio = 100 CNY cash, satellite = 900 CNY, dividend = 0.
+        assertDecimal("0", snapshot.dividendShare)
+        assertDecimal("0.1", snapshot.portfolioShare)
+        val satellite = snapshot.categories.single { it.isSatellite }
+        assertDecimal("0.9", satellite.share)
+    }
+
+    @Test
     fun withoutSatelliteTheBasesAreUnchanged() {
         val noSatellite = data().copy(
             settings = data().settings.copy(
