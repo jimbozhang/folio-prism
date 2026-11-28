@@ -376,6 +376,7 @@ object HistoryCalculator {
                     startValue = startValue,
                     pnlCny = pnlCny,
                     incomplete = startValue == null || endValue == null,
+                    isCash = instrument?.kind == InstrumentKind.CASH,
                 )
             }
         }

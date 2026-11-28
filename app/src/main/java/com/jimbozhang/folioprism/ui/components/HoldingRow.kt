@@ -62,9 +62,23 @@ fun HoldingRow(
         formatNative(nativeValue, instrument.currency)
     }
 
+    // Cash and gold rows lead with the institution; other kinds lead with the instrument.
+    val isGold = Valuation.isGold(instrument)
+    val titleText = if (isCash || isGold) institutionName else "${instrument.code} ${instrument.name}"
+    val detailText = when {
+        isCash ->
+            "${instrument.code} ${instrument.name} ${formatCashNumber(quantity)} ${instrument.unit}"
+        isGold ->
+            "${instrument.code} ${instrument.name} ${formatQuantity(quantity)} ${instrument.unit}" +
+                (price?.let { " × " + formatNative(it, instrument.currency) } ?: "")
+        else ->
+            "$institutionName · ${formatQuantity(quantity)} ${instrument.unit}" +
+                (price?.let { " × " + formatNative(it, instrument.currency) } ?: "")
+    }
+
     Column(modifier = Modifier.padding(vertical = 9.dp)) {
         Text(
-            text = "${instrument.code} ${instrument.name}",
+            text = titleText,
             style = MaterialTheme.typography.bodyMedium,
             color = FolioInk,
             maxLines = 1,
@@ -76,10 +90,7 @@ fun HoldingRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "$institutionName · " +
-                    (if (isCash) formatCashNumber(quantity) else formatQuantity(quantity)) +
-                    " ${instrument.unit}" +
-                    (price?.let { " × " + formatNative(it, instrument.currency) } ?: ""),
+                text = detailText,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

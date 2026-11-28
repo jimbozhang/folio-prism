@@ -2273,7 +2273,12 @@ private fun CategoryPnlRow(
 
 @Composable
 private fun InstrumentPnlCard(rows: List<InstrumentPnl>) {
-    val sorted = rows.sortedWith(
+    // Cash instruments with exactly zero P&L carry no information in the
+    // drill-down; hide them. Non-cash rows and incomplete (null) P&L are kept.
+    val visible = rows.filterNot {
+        it.isCash && it.pnlCny != null && it.pnlCny.signum() == 0
+    }
+    val sorted = visible.sortedWith(
         compareBy<InstrumentPnl> { it.pnlCny == null }
             .thenByDescending { it.pnlCny ?: BigDecimal.ZERO },
     )

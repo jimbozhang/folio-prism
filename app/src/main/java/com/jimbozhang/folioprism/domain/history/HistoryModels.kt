@@ -87,6 +87,8 @@ data class InstrumentPnl(
     val startValue: BigDecimal?,
     val pnlCny: BigDecimal?,
     val incomplete: Boolean,
+    /** True when the instrument is a cash kind. */
+    val isCash: Boolean = false,
 )
 
 data class HistoryResult(
