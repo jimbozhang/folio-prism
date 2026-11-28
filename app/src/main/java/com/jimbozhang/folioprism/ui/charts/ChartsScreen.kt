@@ -117,7 +117,6 @@ import com.jimbozhang.folioprism.ui.theme.FolioGold
 import com.jimbozhang.folioprism.ui.theme.FolioGreen
 import com.jimbozhang.folioprism.ui.theme.FolioInk
 import com.jimbozhang.folioprism.ui.theme.FolioMuted
-import com.jimbozhang.folioprism.ui.theme.FolioPurple
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
@@ -227,9 +226,6 @@ fun ChartsScreen(
     }
     val rebalanceStats = remember(data, quotes.fxRates, range) {
         RebalanceStatsCalculator.calculate(data, quotes.fxRates, range.from, range.to)
-    }
-    val dividendCategoryColors = remember(data.settings.categories) {
-        data.settings.categories.associate { it.id to categoryColor(it) }
     }
     val dividendInstrumentColors = remember(data.instruments, data.settings.categories) {
         data.instruments.associate { ins ->
@@ -341,7 +337,6 @@ fun ChartsScreen(
                 ChartType.DIVIDENDS -> dividendsContent(
                     stats = dividendStats,
                     range = range,
-                    categoryColors = dividendCategoryColors,
                     instrumentColors = dividendInstrumentColors,
                 )
 
@@ -848,7 +843,6 @@ private data class DividendBarRow(
 private fun LazyListScope.dividendsContent(
     stats: DividendStats,
     range: DateRange,
-    categoryColors: Map<String, Color>,
     instrumentColors: Map<String, Color>,
 ) {
     item {
@@ -890,48 +884,6 @@ private fun LazyListScope.dividendsContent(
     }
     item {
         DividendBarsBlock(
-            title = "去向分布",
-            range = range,
-            rows = listOf(
-                DividendBarRow(
-                    id = "withdrawn",
-                    name = "立即转出",
-                    amountCny = stats.withdrawnCny,
-                    count = stats.withdrawnCount,
-                    color = FolioBlue,
-                    flows = stats.records.filter { it.withdrawn },
-                ),
-                DividendBarRow(
-                    id = "retained",
-                    name = "留存现金",
-                    amountCny = stats.retainedCny,
-                    count = stats.retainedCount,
-                    color = FolioGreen,
-                    flows = stats.records.filter { !it.withdrawn },
-                ),
-            ).filter { it.count > 0 },
-            total = stats.totalCny,
-        )
-    }
-    item {
-        DividendBarsBlock(
-            title = "来源类别",
-            range = range,
-            rows = stats.bySourceCategory.map { group ->
-                DividendBarRow(
-                    id = group.id,
-                    name = group.name,
-                    amountCny = group.amountCny,
-                    count = group.count,
-                    color = categoryColors[group.id] ?: FolioMuted,
-                    flows = group.records,
-                )
-            },
-            total = stats.totalCny,
-        )
-    }
-    item {
-        DividendBarsBlock(
             title = "来源标的",
             range = range,
             rows = stats.bySourceInstrument.map { group ->
@@ -943,16 +895,6 @@ private fun LazyListScope.dividendsContent(
                     color = instrumentColors[group.id] ?: FolioMuted,
                     flows = group.records,
                 )
-            },
-            total = stats.totalCny,
-        )
-    }
-    item {
-        DividendBarsBlock(
-            title = "入账账户",
-            range = range,
-            rows = stats.byDestinationAccount.map { group ->
-                DividendBarRow(group.id, group.name, group.amountCny, group.count, FolioPurple, group.records)
             },
             total = stats.totalCny,
         )
@@ -973,6 +915,31 @@ private fun LazyListScope.dividendsContent(
                     },
                 )
             },
+            total = stats.totalCny,
+        )
+    }
+    item {
+        DividendBarsBlock(
+            title = "去向分布",
+            range = range,
+            rows = listOf(
+                DividendBarRow(
+                    id = "withdrawn",
+                    name = "立即转出",
+                    amountCny = stats.withdrawnCny,
+                    count = stats.withdrawnCount,
+                    color = FolioBlue,
+                    flows = stats.records.filter { it.withdrawn },
+                ),
+                DividendBarRow(
+                    id = "retained",
+                    name = "留存现金",
+                    amountCny = stats.retainedCny,
+                    count = stats.retainedCount,
+                    color = FolioGreen,
+                    flows = stats.records.filter { !it.withdrawn },
+                ),
+            ).filter { it.count > 0 },
             total = stats.totalCny,
         )
     }

@@ -185,18 +185,22 @@ private fun DetailBody(data: PortfolioData, event: Event) {
         color = Color(0xFFFAFAFA),
     ) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-            rows.forEachIndexed { index, (label, value) ->
+            rows.forEachIndexed { index, row ->
                 if (index > 0) {
                     HorizontalDivider(color = FolioDivider)
                 }
-                DetailLine(label = label, value = value)
+                DetailLine(label = row.label, value = row.value, valueColor = row.valueColor)
             }
         }
     }
 }
 
 @Composable
-private fun DetailLine(label: String, value: String) {
+private fun DetailLine(
+    label: String,
+    value: String,
+    valueColor: Color = FolioInk,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -212,7 +216,7 @@ private fun DetailLine(label: String, value: String) {
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
-            color = FolioInk,
+            color = valueColor,
             modifier = Modifier.weight(1f),
             textAlign = TextAlign.End,
         )
@@ -242,54 +246,60 @@ private fun NoteBlock(note: String) {
     }
 }
 
-private fun transferRows(data: PortfolioData, event: TransferEvent): List<Pair<String, String>> {
-    val rows = mutableListOf<Pair<String, String>>()
-    rows += "转出" to positionLabel(data, event.from)
-    rows += "转出数量" to quantityLabel(data, event.from, event.fromQuantity)
+private data class DetailRow(
+    val label: String,
+    val value: String,
+    val valueColor: Color = FolioInk,
+)
+
+private fun transferRows(data: PortfolioData, event: TransferEvent): List<DetailRow> {
+    val rows = mutableListOf<DetailRow>()
+    rows += DetailRow("转出", positionLabel(data, event.from))
+    rows += DetailRow("转出数量", quantityLabel(data, event.from, event.fromQuantity))
     event.fromPrice?.let {
-        rows += "转出单价" to formatNative(it, currencyOf(data, event.from))
+        rows += DetailRow("转出单价", formatNative(it, currencyOf(data, event.from)))
     }
-    rows += "转入" to positionLabel(data, event.to)
-    rows += "转入数量" to quantityLabel(data, event.to, event.toQuantity)
+    rows += DetailRow("转入", positionLabel(data, event.to))
+    rows += DetailRow("转入数量", quantityLabel(data, event.to, event.toQuantity))
     event.toPrice?.let {
-        rows += "转入单价" to formatNative(it, currencyOf(data, event.to))
+        rows += DetailRow("转入单价", formatNative(it, currencyOf(data, event.to)))
     }
     if (event.lossAmount.signum() != 0) {
-        rows += "损耗" to signedNative(event.lossAmount.toMoneyAmount(), event.lossCurrency)
+        rows += DetailRow("损耗", unsignedNative(event.lossAmount.toMoneyAmount(), event.lossCurrency), FolioMuted)
     }
     val feeAmount = event.feeAmount
     if (feeAmount != null && feeAmount.signum() != 0) {
         val position = event.feePosition?.let { positionLabel(data, it) }
-        val fee = signedNative(
+        val fee = unsignedNative(
             feeAmount.toMoneyAmount(),
             event.feeCurrency ?: currencyOf(data, event.from),
         )
-        rows += "手续费" to (position?.let { "$it · $fee" } ?: fee)
+        rows += DetailRow("手续费", position?.let { "$it · $fee" } ?: fee, FolioMuted)
     }
     return rows
 }
 
-private fun incomeRows(data: PortfolioData, event: IncomeEvent): List<Pair<String, String>> {
-    val rows = mutableListOf<Pair<String, String>>()
-    rows += "类型" to if (event.kind == IncomeKind.DIVIDEND) "现金分红" else "利息"
-    rows += "来源" to (event.source?.let { positionLabel(data, it) } ?: "外部")
-    rows += "入账" to positionLabel(data, event.destination)
-    rows += "金额" to formatCashNative(event.amount, event.currency)
-    rows += "立即转出" to if (event.immediateExternalWithdrawal) {
+private fun incomeRows(data: PortfolioData, event: IncomeEvent): List<DetailRow> {
+    val rows = mutableListOf<DetailRow>()
+    rows += DetailRow("类型", if (event.kind == IncomeKind.DIVIDEND) "现金分红" else "利息")
+    rows += DetailRow("来源", event.source?.let { positionLabel(data, it) } ?: "外部")
+    rows += DetailRow("入账", positionLabel(data, event.destination))
+    rows += DetailRow("金额", formatCashNative(event.amount, event.currency))
+    rows += DetailRow("立即转出", if (event.immediateExternalWithdrawal) {
         event.externalAccountLabel?.let { "是（$it）" } ?: "是"
     } else {
         "否"
-    }
+    })
     return rows
 }
 
-private fun externalRows(data: PortfolioData, event: ExternalEvent): List<Pair<String, String>> {
-    val rows = mutableListOf<Pair<String, String>>()
-    rows += "方向" to if (event.direction == ExternalDirection.IN) "入金" else "出金"
-    rows += "分类" to if (event.classification == ExternalClassification.CONSUMPTION) "消费" else "本金"
-    rows += "账户" to positionLabel(data, event.position)
-    rows += "金额" to formatCashNative(event.amount, event.currency)
-    event.counterpartyLabel?.let { rows += "外部账户" to it }
+private fun externalRows(data: PortfolioData, event: ExternalEvent): List<DetailRow> {
+    val rows = mutableListOf<DetailRow>()
+    rows += DetailRow("方向", if (event.direction == ExternalDirection.IN) "入金" else "出金")
+    rows += DetailRow("分类", if (event.classification == ExternalClassification.CONSUMPTION) "消费" else "本金")
+    rows += DetailRow("账户", positionLabel(data, event.position))
+    rows += DetailRow("金额", formatCashNative(event.amount, event.currency))
+    event.counterpartyLabel?.let { rows += DetailRow("外部账户", it) }
     return rows
 }
 
@@ -297,20 +307,20 @@ private fun expenseRows(
     data: PortfolioData,
     event: ExpenseEvent,
     categoryNames: Map<String, String>,
-): List<Pair<String, String>> {
-    val rows = mutableListOf<Pair<String, String>>()
-    rows += "账户" to (event.position?.let { positionLabel(data, it) } ?: "非现金损耗")
-    rows += "类别" to (categoryNames[event.categoryId] ?: event.categoryId)
-    rows += "金额" to signedCashNative(event.amount, event.currency)
-    event.linkedTransferId?.let { rows += "关联转账" to it }
+): List<DetailRow> {
+    val rows = mutableListOf<DetailRow>()
+    rows += DetailRow("账户", event.position?.let { positionLabel(data, it) } ?: "非现金损耗")
+    rows += DetailRow("类别", categoryNames[event.categoryId] ?: event.categoryId)
+    rows += DetailRow("金额", signedCashNative(event.amount, event.currency))
+    event.linkedTransferId?.let { rows += DetailRow("关联转账", it) }
     return rows
 }
 
-private fun openingRows(data: PortfolioData, event: OpeningEvent): List<Pair<String, String>> {
-    val rows = mutableListOf<Pair<String, String>>()
-    rows += "持仓" to positionLabel(data, event.position)
+private fun openingRows(data: PortfolioData, event: OpeningEvent): List<DetailRow> {
+    val rows = mutableListOf<DetailRow>()
+    rows += DetailRow("持仓", positionLabel(data, event.position))
     event.quantity?.let {
-        rows += "数量" to quantityLabel(data, event.position, it)
+        rows += DetailRow("数量", quantityLabel(data, event.position, it))
     }
     event.amount?.let {
         val formatted = if (isCashOf(data, event.position)) {
@@ -318,24 +328,24 @@ private fun openingRows(data: PortfolioData, event: OpeningEvent): List<Pair<Str
         } else {
             formatNative(it, currencyOf(data, event.position))
         }
-        rows += "金额" to formatted
+        rows += DetailRow("金额", formatted)
     }
     event.price?.let {
-        rows += "单价" to formatNative(it, currencyOf(data, event.position))
+        rows += DetailRow("单价", formatNative(it, currencyOf(data, event.position)))
     }
     return rows
 }
 
-private fun adjustmentRows(data: PortfolioData, event: AdjustmentEvent): List<Pair<String, String>> {
-    val rows = mutableListOf<Pair<String, String>>()
-    rows += "持仓" to positionLabel(data, event.position)
+private fun adjustmentRows(data: PortfolioData, event: AdjustmentEvent): List<DetailRow> {
+    val rows = mutableListOf<DetailRow>()
+    rows += DetailRow("持仓", positionLabel(data, event.position))
     event.deltaQuantity?.let {
         val formatted = if (isCashOf(data, event.position)) {
             signedCashQuantity(it, unitOf(data, event.position))
         } else {
             signedQuantity(it, unitOf(data, event.position))
         }
-        rows += "数量增减" to formatted
+        rows += DetailRow("数量增减", formatted)
     }
     event.deltaAmount?.let {
         val formatted = if (isCashOf(data, event.position)) {
@@ -343,12 +353,12 @@ private fun adjustmentRows(data: PortfolioData, event: AdjustmentEvent): List<Pa
         } else {
             signedNative(it, currencyOf(data, event.position))
         }
-        rows += "金额增减" to formatted
+        rows += DetailRow("金额增减", formatted)
     }
     event.price?.let {
-        rows += "单价" to formatNative(it, currencyOf(data, event.position))
+        rows += DetailRow("单价", formatNative(it, currencyOf(data, event.position)))
     }
-    rows += "原因" to event.reason
+    rows += DetailRow("原因", event.reason)
     return rows
 }
 

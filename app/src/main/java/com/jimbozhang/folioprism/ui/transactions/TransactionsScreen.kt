@@ -639,19 +639,18 @@ private fun eventSecondaryAmount(
     is TransferEvent -> {
         val parts = buildList {
             if (event.lossAmount.signum() != 0) {
-                add(signedNative(event.lossAmount.toMoneyAmount(), event.lossCurrency))
+                add(unsignedNative(event.lossAmount.toMoneyAmount(), event.lossCurrency))
             }
             val feeAmount = event.feeAmount
             val feeCurrency = event.feeCurrency
             if (feeAmount != null && feeAmount.signum() != 0 && feeCurrency != null) {
-                add(signedNative(feeAmount.toMoneyAmount(), feeCurrency))
+                add(unsignedNative(feeAmount.toMoneyAmount(), feeCurrency))
             }
         }
         if (parts.isEmpty()) {
             null
         } else {
-            val color = if (event.lossAmount.signum() >= 0) FolioGreen else FolioCoral
-            "手续费/损耗 ${parts.joinToString(" + ")}" to color
+            "手续费/损耗 ${parts.joinToString(" · ")}" to FolioMuted
         }
     }
 
@@ -680,6 +679,10 @@ internal fun shortPosition(data: PortfolioData, ref: PositionRef): String {
 
 internal fun signedNative(value: BigDecimal, currency: String): String =
     (if (value.signum() < 0) "-" else "+") + formatNative(value.abs(), currency)
+
+/** Signed display for fee/loss: "-" for negatives, no "+" for positives. */
+internal fun unsignedNative(value: BigDecimal, currency: String): String =
+    if (value.signum() < 0) "-" + formatNative(value.abs(), currency) else formatNative(value, currency)
 
 internal fun signedQuantity(value: BigDecimal, unit: String): String =
     (if (value.signum() < 0) "-" else "+") + formatQuantity(value.abs()) + " " + unit
