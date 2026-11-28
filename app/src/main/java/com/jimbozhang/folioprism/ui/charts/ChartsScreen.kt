@@ -94,6 +94,7 @@ import com.jimbozhang.folioprism.domain.history.DailyPortfolioValue
 import com.jimbozhang.folioprism.domain.history.InstrumentPnl
 import com.jimbozhang.folioprism.domain.model.Category
 import com.jimbozhang.folioprism.domain.model.CategoryIds
+import com.jimbozhang.folioprism.domain.model.ExternalClassification
 import com.jimbozhang.folioprism.domain.model.ExternalDirection
 import com.jimbozhang.folioprism.domain.model.ExternalEvent
 import com.jimbozhang.folioprism.domain.model.InstrumentKind
@@ -107,6 +108,7 @@ import com.jimbozhang.folioprism.ui.components.HoldingRow
 import com.jimbozhang.folioprism.ui.components.RangeArrowButton
 import com.jimbozhang.folioprism.ui.components.formatCny
 import com.jimbozhang.folioprism.ui.components.formatCashCny
+import com.jimbozhang.folioprism.ui.components.formatCashNative
 import com.jimbozhang.folioprism.ui.components.formatPercent
 import com.jimbozhang.folioprism.ui.components.formatQuantity
 import com.jimbozhang.folioprism.ui.theme.FolioBackground
@@ -117,6 +119,7 @@ import com.jimbozhang.folioprism.ui.theme.FolioGold
 import com.jimbozhang.folioprism.ui.theme.FolioGreen
 import com.jimbozhang.folioprism.ui.theme.FolioInk
 import com.jimbozhang.folioprism.ui.theme.FolioMuted
+import com.jimbozhang.folioprism.ui.transactions.shortPosition
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
@@ -152,6 +155,8 @@ private data class MonthFlow(
     val month: YearMonth,
     val inflow: BigDecimal,
     val outflow: BigDecimal,
+    /** Every external event in this month; drives the drill-down card. */
+    val events: List<ExternalEvent> = emptyList(),
 )
 
 private data class DistributionRowData(
@@ -327,7 +332,12 @@ fun ChartsScreen(
                     onRetry = { onLoadHistory(range.from, range.to) },
                 )
 
-                ChartType.FLOWS -> flowsContent(monthlyFlows)
+                ChartType.FLOWS -> flowsContent(
+                    monthly = monthlyFlows,
+                    data = data,
+                    fxRates = quotes.fxRates,
+                    range = range,
+                )
 
                 ChartType.REBALANCE -> rebalanceContent(
                     stats = rebalanceStats,
@@ -799,7 +809,12 @@ private fun LazyListScope.categoryPnlContent(
     }
 }
 
-private fun LazyListScope.flowsContent(monthly: List<MonthFlow>) {
+private fun LazyListScope.flowsContent(
+    monthly: List<MonthFlow>,
+    data: PortfolioData,
+    fxRates: Map<String, BigDecimal>,
+    range: DateRange,
+) {
     val inflow = monthly.fold(BigDecimal.ZERO) { acc, flow -> acc.add(flow.inflow) }
     val outflow = monthly.fold(BigDecimal.ZERO) { acc, flow -> acc.add(flow.outflow) }
     val net = inflow.subtract(outflow)
@@ -812,19 +827,51 @@ private fun LazyListScope.flowsContent(monthly: List<MonthFlow>) {
         )
     }
     item {
-        if (monthly.isEmpty()) {
-            EmptyBlock("所选区间内没有外部本金流入/流出事件。")
-        } else {
-            WhiteBlock {
-                SummaryLine("累计投入", formatCashCny(inflow))
-                HorizontalDivider(color = FolioDivider)
-                SummaryLine("累计取出", formatCashCny(outflow))
-                HorizontalDivider(color = FolioDivider)
-                SummaryLine("净投入", formatCashCny(net), emphasize = true)
-                monthly.asReversed().forEach { flow ->
-                    HorizontalDivider(color = FolioDivider)
-                    FlowRowItem(flow)
-                }
+        FlowsMonthlyBlock(
+            monthly = monthly,
+            inflow = inflow,
+            outflow = outflow,
+            net = net,
+            data = data,
+            fxRates = fxRates,
+            range = range,
+        )
+    }
+}
+
+@Composable
+private fun FlowsMonthlyBlock(
+    monthly: List<MonthFlow>,
+    inflow: BigDecimal,
+    outflow: BigDecimal,
+    net: BigDecimal,
+    data: PortfolioData,
+    fxRates: Map<String, BigDecimal>,
+    range: DateRange,
+) {
+    // Which month is expanded; reset whenever the range changes.
+    var expandedId by remember(range) { mutableStateOf<String?>(null) }
+    if (monthly.isEmpty()) {
+        EmptyBlock("所选区间内没有外部本金流入/流出事件。")
+        return
+    }
+    WhiteBlock {
+        SummaryLine("累计投入", formatCashCny(inflow))
+        HorizontalDivider(color = FolioDivider)
+        SummaryLine("累计取出", formatCashCny(outflow))
+        HorizontalDivider(color = FolioDivider)
+        SummaryLine("净投入", formatCashCny(net), emphasize = true)
+        monthly.asReversed().forEach { flow ->
+            HorizontalDivider(color = FolioDivider)
+            val id = flow.month.toString()
+            val expanded = expandedId == id
+            FlowRowItem(
+                flow = flow,
+                expanded = expanded,
+                onToggle = { expandedId = if (expanded) null else id },
+            )
+            if (expanded && flow.events.isNotEmpty()) {
+                ExternalFlowsCard(flow.events, data, fxRates)
             }
         }
     }
@@ -1119,6 +1166,96 @@ private fun DividendFlowRowItem(record: DividendRecord) {
             )
             Text(
                 text = formatCashCny(record.amountCny),
+                style = MaterialTheme.typography.labelLarge,
+                color = FolioInk,
+            )
+        }
+    }
+}
+
+/**
+ * Drill-down card below an expanded month row: every external deposit or
+ * withdrawal in that month, newest first, with its cash position, direction
+ * and amount; amounts in CNY at the current rate, falling back to native
+ * when no FX is available.
+ */
+@Composable
+private fun ExternalFlowsCard(
+    events: List<ExternalEvent>,
+    data: PortfolioData,
+    fxRates: Map<String, BigDecimal>,
+) {
+    val sorted = events.sortedByDescending { it.date }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, top = 2.dp, end = 16.dp, bottom = 14.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFFF5F5F5)),
+    ) {
+        sorted.forEachIndexed { index, event ->
+            if (index > 0) {
+                HorizontalDivider(color = FolioDivider)
+            }
+            ExternalFlowRowItem(event, data, fxRates)
+        }
+    }
+}
+
+@Composable
+private fun ExternalFlowRowItem(
+    event: ExternalEvent,
+    data: PortfolioData,
+    fxRates: Map<String, BigDecimal>,
+) {
+    val isIn = event.direction == ExternalDirection.IN
+    val amountCny = fxToCny(event.currency, fxRates)
+        ?.let { event.amount.multiply(it).toCnyAmount() }
+    val noteSuffix = event.note.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        // Three lines so long names get the full width: the cash position,
+        // the direction and context, then date and amount.
+        Text(
+            text = shortPosition(data, event.position),
+            style = MaterialTheme.typography.bodyMedium,
+            color = FolioInk,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = buildString {
+                append(if (isIn) "入金" else "出金")
+                append(" · ")
+                append(
+                    if (event.classification == ExternalClassification.CONSUMPTION) "消费"
+                    else "本金",
+                )
+                event.counterpartyLabel?.let { append(" · 外部账户 ").append(it) }
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = FolioMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = event.localDate().toString() + noteSuffix,
+                style = MaterialTheme.typography.labelSmall,
+                color = FolioMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = (if (isIn) "+" else "-") +
+                    (amountCny?.let { formatCashCny(it) }
+                        ?: formatCashNative(event.amount, event.currency)),
                 style = MaterialTheme.typography.labelLarge,
                 color = FolioInk,
             )
@@ -2375,32 +2512,49 @@ private fun InstrumentPnlRow(item: InstrumentPnl) {
 }
 
 @Composable
-private fun FlowRowItem(flow: MonthFlow) {
+private fun FlowRowItem(
+    flow: MonthFlow,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
     val net = flow.inflow.subtract(flow.outflow)
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clickable(onClick = onToggle),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "${flow.month.year} 年 ${flow.month.monthValue} 月",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = FolioInk,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "投入 ${formatCashCny(flow.inflow)} · 取出 ${formatCashCny(flow.outflow)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FolioMuted,
+                )
+            }
             Text(
-                text = "${flow.month.year} 年 ${flow.month.monthValue} 月",
-                style = MaterialTheme.typography.bodyLarge,
-                color = FolioInk,
+                text = formatCashCny(net),
+                style = MaterialTheme.typography.titleSmall,
+                color = if (net.signum() < 0) FolioGreen else FolioInk,
             )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "投入 ${formatCashCny(flow.inflow)} · 取出 ${formatCashCny(flow.outflow)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = FolioMuted,
+            Spacer(modifier = Modifier.width(6.dp))
+            Icon(
+                imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                contentDescription = if (expanded) "收起流水" else "展开流水",
+                tint = FolioMuted,
+                modifier = Modifier.size(18.dp),
             )
         }
-        Text(
-            text = formatCashCny(net),
-            style = MaterialTheme.typography.titleSmall,
-            color = if (net.signum() < 0) FolioGreen else FolioInk,
-        )
     }
 }
 
@@ -2883,6 +3037,6 @@ private fun monthlyFlows(
                     outflow = outflow.add(amountCny)
                 }
             }
-            MonthFlow(month, inflow, outflow)
+            MonthFlow(month, inflow, outflow, events)
         }
 }
